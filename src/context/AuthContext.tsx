@@ -1,4 +1,4 @@
-// context/AuthContext.tsx - Adaptado para Next.js
+// context/AuthContext.tsx - Context de autenticação (igual ao cursor com roles)
 'use client';
 
 import { createContext, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
@@ -8,8 +8,9 @@ type JwtPayload = {
   name?: string;
   nome?: string;
   email?: string;
-  role?: string;
+  role?: 'ADMIN' | 'USER' | 'ORGANIZER' | string;
   atletaId?: string | null;
+  pointIdGestor?: string | null;
   iat?: number;
   exp?: number;
 };
@@ -19,6 +20,11 @@ type AuthContextType = {
   autenticado: boolean;
   token: string | null;
   basicCreds: { email: string; senha: string } | null;
+  isAdmin: boolean;
+  isOrganizer: boolean;
+  isUser: boolean;
+  pointIdGestor: string | null;
+  atletaId: string | null;
   setUsuario: (usuario: JwtPayload | null) => void;
   logout: () => void;
   login: (args: {
@@ -34,6 +40,11 @@ const AuthContext = createContext<AuthContextType>({
   autenticado: false,
   token: null,
   basicCreds: null,
+  isAdmin: false,
+  isOrganizer: false,
+  isUser: false,
+  pointIdGestor: null,
+  atletaId: null,
   logout: () => {},
   setUsuario: () => {},
   login: () => {},
@@ -100,20 +111,30 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const isAdmin = usuario?.role === 'ADMIN';
+  const isOrganizer = usuario?.role === 'ORGANIZER';
+  const isUser = usuario?.role === 'USER' || (!isAdmin && !isOrganizer);
+  const pointIdGestor = usuario?.pointIdGestor || null;
+  const atletaId = usuario?.atletaId || null;
+
   const value = useMemo<AuthContextType>(
     () => ({
       usuario,
       autenticado: !!usuario,
       token,
       basicCreds,
+      isAdmin,
+      isOrganizer,
+      isUser,
+      pointIdGestor,
+      atletaId,
       setUsuario,
       logout,
       login,
       authReady,
     }),
-    [usuario, token, basicCreds, authReady]
+    [usuario, token, basicCreds, isAdmin, isOrganizer, isUser, pointIdGestor, atletaId, authReady]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
-

@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/context/AuthContext";
-import Menu from "@/components/Menu";
 
 export const metadata: Metadata = {
-  title: "App Unificado",
-  description: "Sistema completo com frontend e backend",
+  title: "Carlão BT Online",
+  description: "Sistema completo de gestão de tênis",
 };
 
 export default function RootLayout({
@@ -17,8 +16,7 @@ export default function RootLayout({
     <html lang="pt-BR">
       <body className="antialiased">
         <AuthProvider>
-          <Menu />
-          <main>{children}</main>
+          {children}
         </AuthProvider>
       </body>
     </html>
