@@ -3,6 +3,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import MinhasPartidasCompacta from '@/components/MinhasPartidasCompacta';
+import MinhasPartidas from '@/components/MinhasPartidas';
+import GraficoEvolutivo from '@/components/GraficoEvolutivo';
 import { api } from '@/lib/api';
 import type { Atleta, Partida } from '@/types/domain';
 
@@ -87,96 +89,81 @@ export default function AtletaDashboardPage() {
           />
 
           {/* Controles do gráfico */}
-          <div className="flex flex-wrap items-center gap-3 mt-4">
-            <button
-              onClick={() => setMostrarGrafico((v) => !v)}
-              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-            >
-              {mostrarGrafico ? 'Ocultar Desempenho' : 'Ver Desempenho'}
-            </button>
+          <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <button
+                onClick={() => setMostrarGrafico((v) => !v)}
+                className="w-full sm:w-auto px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold"
+              >
+                {mostrarGrafico ? 'Ocultar Desempenho' : 'Ver Desempenho'}
+              </button>
 
-            {mostrarGrafico && (
-              <>
-                <label className="text-sm text-gray-700">
-                  Período:{' '}
-                  <select
-                    value={periodo}
-                    onChange={(e) => setPeriodo(e.target.value as Periodo)}
-                    className="ml-1 border rounded px-2 py-1"
-                  >
-                    <option value="all">Todos</option>
-                    <option value="30">30 dias</option>
-                    <option value="90">90 dias</option>
-                    <option value="365">365 dias</option>
-                  </select>
-                </label>
+              {mostrarGrafico && (
+                <div className="flex flex-col sm:flex-row gap-4 sm:items-center">
+                  <label className="flex flex-col sm:flex-row sm:items-center gap-2 text-sm text-gray-700">
+                    <span className="font-medium">Período:</span>
+                    <select
+                      value={periodo}
+                      onChange={(e) => setPeriodo(e.target.value as Periodo)}
+                      className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    >
+                      <option value="all">Todos</option>
+                      <option value="30">30 dias</option>
+                      <option value="90">90 dias</option>
+                      <option value="365">365 dias</option>
+                    </select>
+                  </label>
 
-                <label className="text-sm text-gray-700 flex items-center gap-2">
-                  Peso do TB:
-                  <input
-                    type="range"
-                    min={0}
-                    max={0.25}
-                    step={0.05}
-                    value={tbWeight}
-                    onChange={(e) => setTbWeight(Number(e.target.value))}
-                  />
-                  <span className="text-xs text-gray-600 w-10 text-right">
-                    {tbWeight.toFixed(2)}
-                  </span>
-                </label>
-              </>
-            )}
+                  <label className="flex flex-col sm:flex-row sm:items-center gap-2 text-sm text-gray-700">
+                    <span className="font-medium">Peso do TB:</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min={0}
+                        max={0.25}
+                        step={0.05}
+                        value={tbWeight}
+                        onChange={(e) => setTbWeight(Number(e.target.value))}
+                        className="flex-1"
+                      />
+                      <span className="text-xs text-gray-600 w-12 text-right font-semibold">
+                        {tbWeight.toFixed(2)}
+                      </span>
+                    </div>
+                  </label>
+                </div>
+              )}
+            </div>
           </div>
 
           {mostrarGrafico && partidasPeriodo.length > 0 && (
-            <div className="mt-2 bg-white rounded-xl shadow p-4">
-              <p className="text-gray-600 mb-4">
-                Gráfico de desempenho será implementado em breve...
-              </p>
+            <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6">
+              <GraficoEvolutivo
+                partidas={partidasPeriodo}
+                atletaId={atleta.id}
+                tbWeight={tbWeight}
+                title={
+                  periodo === 'all'
+                    ? 'Evolução do Atleta — Todas as partidas'
+                    : `Evolução do Atleta — Últimos ${periodo} dias`
+                }
+              />
             </div>
           )}
 
           {mostrarPartidas && (
-            <div className="bg-white rounded-xl shadow p-4">
-              <h2 className="text-lg font-semibold mb-4">Todas as Partidas</h2>
-              <p className="text-gray-600 mb-4">Lista completa será implementada em breve...</p>
-              <button
-                onClick={() => setMostrarPartidas(false)}
-                className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
-              >
-                Fechar
-              </button>
-            </div>
+            <MinhasPartidas
+              partidas={partidas}
+              atletaId={atleta.id}
+              onAbrirTodas={() => setMostrarPartidas(false)}
+              onNovaPartida={carregarPartidas}
+              onAtualizarPlacar={(p) => {
+                setPartidaSelecionada(p);
+                setModalPlacar(true);
+              }}
+            />
           )}
 
-          {modalPlacar && partidaSelecionada && (
-            <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
-              <div className="bg-white rounded-lg p-6 relative max-w-md w-full">
-                <button
-                  className="absolute top-2 right-2 text-gray-600 hover:text-black text-lg"
-                  onClick={() => {
-                    setModalPlacar(false);
-                    setPartidaSelecionada(null);
-                  }}
-                >
-                  ✕
-                </button>
-                <h3 className="text-lg font-semibold mb-4">Atualizar Placar</h3>
-                <p className="text-gray-600 mb-4">Modal será implementado em breve...</p>
-                <button
-                  onClick={() => {
-                    setModalPlacar(false);
-                    setPartidaSelecionada(null);
-                    carregarPartidas();
-                  }}
-                  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                >
-                  Fechar
-                </button>
-              </div>
-            </div>
-          )}
         </>
       )}
     </div>

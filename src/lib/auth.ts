@@ -88,3 +88,4 @@ export async function requireAuth(request: NextRequest): Promise<{ user: User } 
   return { user };
 }
 
+

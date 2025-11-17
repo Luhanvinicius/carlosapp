@@ -73,3 +73,4 @@ export const getUsuarioById = async (id: string) => {
   return result.rows[0] || null;
 };
 
+

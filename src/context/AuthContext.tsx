@@ -1,4 +1,4 @@
-// context/AuthContext.tsx - Context de autenticação (igual ao cursor com roles)
+// context/AuthContext.tsx - Context de autenticação (Basic Auth)
 'use client';
 
 import { createContext, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
@@ -114,8 +114,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const isAdmin = usuario?.role === 'ADMIN';
   const isOrganizer = usuario?.role === 'ORGANIZER';
   const isUser = usuario?.role === 'USER' || (!isAdmin && !isOrganizer);
-  const pointIdGestor = usuario?.pointIdGestor || null;
-  const atletaId = usuario?.atletaId || null;
+  const pointIdGestor = usuario?.pointIdGestor ?? null;
+  const atletaId = usuario?.atletaId ?? null;
 
   const value = useMemo<AuthContextType>(
     () => ({

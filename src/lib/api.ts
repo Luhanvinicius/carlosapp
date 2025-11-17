@@ -62,14 +62,36 @@ async function apiRequest(
 export const api = {
   get: async (endpoint: string, config?: any) => {
     try {
+      // Se responseType é 'blob', não adiciona Content-Type JSON
+      const headers: Record<string, string> = {
+        ...(config?.headers as Record<string, string> || {}),
+      };
+      
+      // Só adiciona Content-Type JSON se não for blob
+      if (config?.responseType !== 'blob') {
+        headers['Content-Type'] = 'application/json';
+      }
+
       const response = await apiRequest(endpoint, {
         method: 'GET',
-        headers: config?.headers,
+        headers,
       });
       
       // 204 No Content - não tem body
       if (response.status === 204) {
         return { data: null, status: 204, headers: response.headers };
+      }
+      
+      // Se responseType é 'blob', retorna o blob
+      if (config?.responseType === 'blob') {
+        const blob = await response.blob();
+        if (!response.ok) {
+          const error: any = new Error('Erro ao obter blob');
+          error.status = response.status;
+          error.response = { data: blob };
+          throw error;
+        }
+        return { data: blob, status: response.status, headers: response.headers };
       }
       
       // Tenta parsear JSON, se falhar retorna objeto vazio

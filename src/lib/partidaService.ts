@@ -119,3 +119,4 @@ export async function atualizarPlacar(partidaId: string, placar: {
   return result.rows[0];
 }
 
+

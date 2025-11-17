@@ -288,3 +288,4 @@ headers['Authorization'] = `Basic ${b64}`;
 
 O sistema unificado está pronto para produção e mantém toda a funcionalidade do sistema anterior, com benefícios adicionais de simplicidade e performance.
 
+
