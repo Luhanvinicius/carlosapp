@@ -2,19 +2,10 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { userService } from '@/services/userService';
+import { userService, type UsuarioAdmin } from '@/services/userService';
 import { pointService } from '@/services/agendamentoService';
 import type { Point } from '@/types/agendamento';
 import { RefreshCcw, User as UserIcon } from 'lucide-react';
-
-type UsuarioAdmin = {
-  id: string;
-  name: string;
-  email: string;
-  role: string;
-  pointIdGestor?: string | null;
-  createdAt?: string;
-};
 
 export default function AdminUsuariosPage() {
   const [usuarios, setUsuarios] = useState<UsuarioAdmin[]>([]);
