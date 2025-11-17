@@ -1,0 +1,758 @@
+// components/EditarAgendamentoModal.tsx - Modal de edição de agendamento (100% igual ao cursor)
+'use client';
+
+import { useEffect, useMemo, useState } from 'react';
+import { Dialog } from '@headlessui/react';
+import { useAuth } from '@/context/AuthContext';
+import { pointService, quadraService, agendamentoService } from '@/services/agendamentoService';
+import { api } from '@/lib/api';
+import type { Agendamento, ModoAgendamento } from '@/types/agendamento';
+import { Calendar, Clock, MapPin, AlertCircle, User, Users, UserPlus } from 'lucide-react';
+
+interface Atleta {
+  id: string;
+  nome: string;
+  fone?: string;
+}
+
+interface EditarAgendamentoModalProps {
+  isOpen: boolean;
+  agendamento: Agendamento | null;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+export default function EditarAgendamentoModal({
+  isOpen,
+  agendamento,
+  onClose,
+  onSuccess,
+}: EditarAgendamentoModalProps) {
+  const { usuario } = useAuth();
+  const isAdmin = usuario?.role === 'ADMIN';
+  const isOrganizer = usuario?.role === 'ORGANIZER';
+  const canGerenciarAgendamento = !!(isAdmin || isOrganizer);
+
+  const [points, setPoints] = useState<any[]>([]);
+  const [quadras, setQuadras] = useState<any[]>([]);
+  const [atletas, setAtletas] = useState<Atleta[]>([]);
+  const [agendamentosExistentes, setAgendamentosExistentes] = useState<Agendamento[]>([]);
+  const [carregandoAtletas, setCarregandoAtletas] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState('');
+
+  // Modo de agendamento (apenas para admin)
+  const [modo, setModo] = useState<ModoAgendamento>('normal');
+
+  // Campos comuns
+  const [pointId, setPointId] = useState('');
+  const [quadraId, setQuadraId] = useState('');
+  const [data, setData] = useState('');
+  const [hora, setHora] = useState('');
+  const [duracao, setDuracao] = useState(60);
+  const [observacoes, setObservacoes] = useState('');
+  const [valorHora, setValorHora] = useState<number | null>(null);
+  const [valorCalculado, setValorCalculado] = useState<number | null>(null);
+  const [valorNegociado, setValorNegociado] = useState<string>('');
+
+  // Campos específicos por modo
+  const [atletaId, setAtletaId] = useState('');
+  const [nomeAvulso, setNomeAvulso] = useState('');
+  const [telefoneAvulso, setTelefoneAvulso] = useState('');
+  const [buscaAtleta, setBuscaAtleta] = useState('');
+
+  useEffect(() => {
+    if (isOpen && agendamento) {
+      carregarDados();
+      preencherFormulario();
+    }
+  }, [isOpen, agendamento]);
+
+  useEffect(() => {
+    if (pointId) {
+      carregarQuadras(pointId);
+    }
+  }, [pointId]);
+
+  useEffect(() => {
+    if (quadraId && data && agendamento) {
+      verificarDisponibilidade();
+    }
+  }, [quadraId, data]);
+
+  useEffect(() => {
+    if (modo === 'normal') {
+      setAtletaId('');
+      setNomeAvulso('');
+      setTelefoneAvulso('');
+    } else if (modo === 'atleta') {
+      setNomeAvulso('');
+      setTelefoneAvulso('');
+      setBuscaAtleta('');
+    } else if (modo === 'avulso') {
+      setAtletaId('');
+    }
+  }, [modo]);
+
+  const atletasFiltrados = useMemo(() => {
+    if (!buscaAtleta.trim()) return atletas;
+    const termo = buscaAtleta.toLowerCase();
+    return atletas.filter((a) => {
+      const base = `${a.nome} ${a.fone || ''}`.toLowerCase();
+      return base.includes(termo);
+    });
+  }, [atletas, buscaAtleta]);
+
+  const carregarDados = async () => {
+    try {
+      const [pointsData, atletasData] = await Promise.all([
+        pointService.listar(),
+        canGerenciarAgendamento && agendamento
+          ? (async () => {
+              try {
+                const params: Record<string, string> = {};
+                if (!isAdmin && agendamento?.quadra?.point?.id) {
+                  params.pointId = agendamento.quadra.point.id;
+                }
+                const queryString = Object.keys(params).length > 0 
+                  ? `?${new URLSearchParams(params).toString()}` 
+                  : '';
+                const res = await api.get(`/atleta/listarAtletas${queryString}`);
+                const data = Array.isArray(res.data) ? res.data : res.data?.atletas || [];
+                return data;
+              } catch (error) {
+                console.error('Erro ao carregar atletas:', error);
+                return [];
+              }
+            })()
+          : Promise.resolve([] as Atleta[]),
+      ]);
+
+      setPoints(pointsData.filter((p: any) => p.ativo));
+      if (canGerenciarAgendamento) {
+        setCarregandoAtletas(true);
+        setAtletas(atletasData as Atleta[]);
+        setCarregandoAtletas(false);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar dados:', error);
+    }
+  };
+
+  const preencherFormulario = () => {
+    if (!agendamento) return;
+
+    // Preenche dados básicos
+    const dataHora = new Date(agendamento.dataHora);
+    setData(dataHora.toISOString().split('T')[0]);
+    setHora(dataHora.toTimeString().slice(0, 5));
+    setDuracao(agendamento.duracao);
+    setObservacoes(agendamento.observacoes || '');
+    setValorHora(agendamento.valorHora ?? null);
+    setValorCalculado(agendamento.valorCalculado ?? null);
+    setValorNegociado(
+      agendamento.valorNegociado != null
+        ? agendamento.valorNegociado.toString().replace('.', ',')
+        : ''
+    );
+
+    // Preenche quadra e point
+    setQuadraId(agendamento.quadraId);
+    setPointId(agendamento.quadra.point.id);
+
+    // Determina o modo baseado no agendamento
+    if (agendamento.atletaId && agendamento.atleta) {
+      setModo('atleta');
+      setAtletaId(agendamento.atletaId);
+    } else if (agendamento.nomeAvulso) {
+      setModo('avulso');
+      setNomeAvulso(agendamento.nomeAvulso);
+      setTelefoneAvulso(agendamento.telefoneAvulso || '');
+    } else {
+      setModo('normal');
+    }
+  };
+
+  const carregarQuadras = async (pointId: string) => {
+    try {
+      const data = await quadraService.listar(pointId);
+      setQuadras(data.filter((q: any) => q.ativo));
+    } catch (error) {
+      console.error('Erro ao carregar quadras:', error);
+    }
+  };
+
+  const verificarDisponibilidade = async () => {
+    if (!quadraId || !data || !agendamento) return;
+
+    try {
+      const dataInicio = `${data}T00:00:00`;
+      const dataFim = `${data}T23:59:59`;
+
+      const agendamentos = await agendamentoService.listar({
+        quadraId,
+        dataInicio,
+        dataFim,
+        status: 'CONFIRMADO',
+      });
+
+      // Remove o agendamento atual da lista (para não considerar conflito com ele mesmo)
+      setAgendamentosExistentes(
+        agendamentos.filter((ag) => ag.id !== agendamento.id)
+      );
+    } catch (error) {
+      console.error('Erro ao verificar disponibilidade:', error);
+    }
+  };
+
+  const verificarConflito = (): string | null => {
+    if (!data || !hora || !duracao) return null;
+
+    const agora = new Date();
+    const dataHoraSelecionada = new Date(`${data}T${hora}:00`);
+
+    // Não permitir agendamento no passado
+    if (dataHoraSelecionada < agora) {
+      return 'Não é possível agendar no passado';
+    }
+
+    // Verificar conflitos com agendamentos existentes
+    const horaInicio = dataHoraSelecionada.getTime();
+    const horaFim = horaInicio + duracao * 60000;
+
+    for (const ag of agendamentosExistentes) {
+      const agInicio = new Date(ag.dataHora).getTime();
+      const agFim = agInicio + ag.duracao * 60000;
+
+      if (
+        (horaInicio >= agInicio && horaInicio < agFim) ||
+        (horaFim > agInicio && horaFim <= agFim) ||
+        (horaInicio <= agInicio && horaFim >= agFim)
+      ) {
+        const inicio = new Date(agInicio).toLocaleTimeString('pt-BR', {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        const fim = new Date(agFim).toLocaleTimeString('pt-BR', {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        return `Conflito com agendamento existente das ${inicio} às ${fim}`;
+      }
+    }
+
+    return null;
+  };
+
+  const validarFormulario = (): string | null => {
+    if (!quadraId || !data || !hora) {
+      return 'Preencha todos os campos obrigatórios';
+    }
+
+    if (modo === 'atleta' && !atletaId) {
+      return 'Selecione um atleta';
+    }
+
+    if (modo === 'avulso') {
+      if (!nomeAvulso.trim()) {
+        return 'Informe o nome para agendamento avulso';
+      }
+      if (!telefoneAvulso.trim()) {
+        return 'Informe o telefone para agendamento avulso';
+      }
+      const telefoneLimpo = telefoneAvulso.replace(/\D/g, '');
+      if (telefoneLimpo.length < 10) {
+        return 'Telefone inválido';
+      }
+    }
+
+    return null;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!agendamento) return;
+
+    setErro('');
+
+    const erroValidacao = validarFormulario();
+    if (erroValidacao) {
+      setErro(erroValidacao);
+      return;
+    }
+
+    const conflito = verificarConflito();
+    if (conflito) {
+      setErro(conflito);
+      return;
+    }
+
+    setSalvando(true);
+
+    try {
+      const dataHora = `${data}T${hora}:00`;
+      const payload: any = {
+        dataHora,
+        duracao,
+        observacoes: observacoes || undefined,
+      };
+
+      // Se for admin/organizador e mudou o modo, atualiza os campos específicos
+      if (canGerenciarAgendamento) {
+        if (modo === 'atleta' && atletaId) {
+          payload.atletaId = atletaId;
+          // Remove campos de avulso se existirem
+          payload.nomeAvulso = null;
+          payload.telefoneAvulso = null;
+        } else if (modo === 'avulso') {
+          payload.nomeAvulso = nomeAvulso.trim();
+          payload.telefoneAvulso = telefoneAvulso.trim();
+          // Remove atletaId se existir
+          payload.atletaId = null;
+        } else {
+          // Modo normal - remove campos específicos
+          payload.atletaId = null;
+          payload.nomeAvulso = null;
+          payload.telefoneAvulso = null;
+        }
+      }
+
+      // Atualização de valor negociado (ADMIN e ORGANIZER podem informar).
+      // Se o campo estiver em branco, não enviamos `valorNegociado` para o backend,
+      // assim ele recalcula `valorHora` e `valorCalculado` e, se aplicável, define o novo valorNegociado.
+      if (canGerenciarAgendamento && valorNegociado.trim()) {
+        const valor = parseFloat(valorNegociado.replace(',', '.'));
+        if (!isNaN(valor) && valor > 0) {
+          payload.valorNegociado = valor;
+        }
+      }
+
+      const atualizado = await agendamentoService.atualizar(agendamento.id, payload);
+
+      // Atualiza os valores exibidos com o retorno do backend (recalculado)
+      setValorHora(atualizado.valorHora ?? null);
+      setValorCalculado(atualizado.valorCalculado ?? null);
+      setValorNegociado(
+        atualizado.valorNegociado != null
+          ? atualizado.valorNegociado.toString().replace('.', ',')
+          : ''
+      );
+
+      onSuccess();
+      onClose();
+    } catch (error: any) {
+      console.error('Erro ao atualizar agendamento:', error);
+      setErro(
+        error?.response?.data?.mensagem ||
+          error?.data?.mensagem ||
+          'Erro ao atualizar agendamento. Tente novamente.'
+      );
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  const getHorariosOcupados = (): string[] => {
+    if (!data) return [];
+
+    return agendamentosExistentes.map((ag) => {
+      const agData = new Date(ag.dataHora);
+      return agData.toLocaleTimeString('pt-BR', {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    });
+  };
+
+  const horariosOcupados = getHorariosOcupados();
+  const conflito = verificarConflito();
+
+  const formatCurrency = (v: number | null) =>
+    v == null
+      ? '—'
+      : new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+
+  if (!isOpen || !agendamento) return null;
+
+  return (
+    <Dialog open={isOpen} onClose={onClose} className="relative z-50">
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" aria-hidden="true" />
+      <div className="fixed inset-0 flex items-center justify-center p-4">
+        <Dialog.Panel className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+          <Dialog.Title className="text-2xl font-bold text-gray-900 mb-2">
+            Editar Agendamento
+          </Dialog.Title>
+          <p className="text-sm text-gray-600 mb-6">
+            Atualize as informações do agendamento
+          </p>
+
+          {/* Seletor de Modo (apenas para admin/organizador) */}
+          {canGerenciarAgendamento && (
+            <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+              <label className="block text-sm font-medium text-gray-700 mb-3">
+                Tipo de Agendamento
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setModo('normal')}
+                  className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
+                    modo === 'normal'
+                      ? 'border-blue-600 bg-blue-100 text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  <User className="w-5 h-5" />
+                  <span className="font-medium">Para mim</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModo('atleta')}
+                  className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
+                    modo === 'atleta'
+                      ? 'border-blue-600 bg-blue-100 text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  <Users className="w-5 h-5" />
+                  <span className="font-medium">Para atleta</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModo('avulso')}
+                  className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
+                    modo === 'avulso'
+                      ? 'border-blue-600 bg-blue-100 text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  <UserPlus className="w-5 h-5" />
+                  <span className="font-medium">Avulso</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Seleção de Atleta (modo atleta) */}
+            {canGerenciarAgendamento && modo === 'atleta' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <Users className="inline w-4 h-4 mr-1" />
+                  Selecionar Atleta *
+                </label>
+                {carregandoAtletas ? (
+                  <div className="px-4 py-3 border border-gray-300 rounded-lg bg-gray-50 text-center text-gray-600">
+                    Carregando atletas...
+                  </div>
+                ) : (
+                  <>
+                    <input
+                      type="text"
+                      value={buscaAtleta}
+                      onChange={(e) => setBuscaAtleta(e.target.value)}
+                      placeholder="Buscar por nome ou telefone..."
+                      className="mb-2 w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
+                    />
+                    <select
+                      value={atletaId}
+                      onChange={(e) => setAtletaId(e.target.value)}
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    >
+                      <option value="">Selecione um atleta</option>
+                      {atletasFiltrados.map((atleta) => (
+                        <option key={atleta.id} value={atleta.id}>
+                          {atleta.nome} {atleta.fone && `- ${atleta.fone}`}
+                        </option>
+                      ))}
+                    </select>
+                    {atletasFiltrados.length === 0 && !!buscaAtleta.trim() && (
+                      <p className="mt-1 text-xs text-gray-500">
+                        Nenhum atleta encontrado para "{buscaAtleta}". Tente outro nome ou telefone.
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Campos Avulso (modo avulso) */}
+            {canGerenciarAgendamento && modo === 'avulso' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <UserPlus className="inline w-4 h-4 mr-1" />
+                    Nome *
+                  </label>
+                  <input
+                    type="text"
+                    value={nomeAvulso}
+                    onChange={(e) => setNomeAvulso(e.target.value)}
+                    required
+                    placeholder="Nome completo"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Telefone *</label>
+                  <input
+                    type="text"
+                    value={telefoneAvulso}
+                    onChange={(e) => {
+                      const masked = e.target.value
+                        .replace(/\D/g, '')
+                        .replace(/^(\d{2})(\d)/, '($1) $2')
+                        .replace(/(\d{5})(\d)/, '$1-$2')
+                        .slice(0, 15);
+                      setTelefoneAvulso(masked);
+                    }}
+                    required
+                    placeholder="(99) 99999-9999"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <MapPin className="inline w-4 h-4 mr-1" />
+                  Estabelecimento
+                </label>
+                {isAdmin ? (
+                  <select
+                    value={pointId}
+                    onChange={(e) => {
+                      setPointId(e.target.value);
+                      setQuadraId('');
+                    }}
+                    required
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  >
+                    <option value="">Selecione um estabelecimento</option>
+                    {points.map((point) => (
+                      <option key={point.id} value={point.id}>
+                        {point.nome}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="w-full px-4 py-3 border border-gray-200 rounded-lg bg-gray-50 text-sm text-gray-700">
+                    {agendamento.quadra.point?.nome || 'Arena do gestor'}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Quadra *</label>
+                <select
+                  value={quadraId}
+                  onChange={(e) => setQuadraId(e.target.value)}
+                  required
+                  disabled={!pointId}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                >
+                  <option value="">Selecione uma quadra</option>
+                  {quadras.map((quadra) => (
+                    <option key={quadra.id} value={quadra.id}>
+                      {quadra.nome} {quadra.tipo && `(${quadra.tipo})`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <Calendar className="inline w-4 h-4 mr-1" />
+                  Data *
+                </label>
+                <input
+                  type="date"
+                  value={data}
+                  onChange={(e) => setData(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  required
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <Clock className="inline w-4 h-4 mr-1" />
+                  Hora *
+                </label>
+                <input
+                  type="time"
+                  value={hora}
+                  onChange={(e) => setHora(e.target.value)}
+                  required
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Duração (min) *</label>
+                <select
+                  value={duracao}
+                  onChange={(e) => setDuracao(Number(e.target.value))}
+                  required
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                >
+                  <option value={30}>30 minutos</option>
+                  <option value={60}>1 hora</option>
+                  <option value={90}>1h30</option>
+                  <option value={120}>2 horas</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Observações</label>
+              <textarea
+                value={observacoes}
+                onChange={(e) => setObservacoes(e.target.value)}
+                rows={3}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                placeholder="Informações adicionais sobre o agendamento..."
+              />
+            </div>
+
+            {/* Valores */}
+            <div className="space-y-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
+                  <p className="text-xs text-slate-500 mb-1 flex items-center gap-1">
+                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-100 text-[10px] font-semibold text-slate-700">
+                      R$
+                    </span>
+                    Tabela / hora
+                  </p>
+                  <p className="text-sm font-semibold text-slate-900">
+                    {formatCurrency(valorHora)}
+                  </p>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
+                  <p className="text-xs text-slate-500 mb-1">Total calculado (tabela)</p>
+                  <p className="text-sm font-semibold text-slate-900">
+                    {formatCurrency(valorCalculado)}
+                  </p>
+                </div>
+                <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-100">
+                  <label className="block text-xs text-emerald-700 mb-1 font-medium">
+                    Valor negociado
+                    <span className="ml-1 inline-flex items-center justify-center w-5 h-5 rounded-full bg-white text-[10px] font-semibold text-emerald-700 border border-emerald-200">
+                      R$
+                    </span>
+                    {canGerenciarAgendamento && (
+                      <span className="ml-1 text-[10px] text-emerald-700">(editável)</span>
+                    )}
+                  </label>
+                  {canGerenciarAgendamento ? (
+                    <input
+                      type="text"
+                      value={valorNegociado}
+                      onChange={(e) => {
+                        const raw = e.target.value.replace(/[^\d,.-]/g, '');
+                        setValorNegociado(raw);
+                      }}
+                      placeholder="Ex: 90,00"
+                      className="w-full px-3 py-2 border border-emerald-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none text-sm bg-white"
+                    />
+                  ) : (
+                    <p className="text-sm font-semibold text-emerald-800">
+                      {formatCurrency(
+                        valorNegociado.trim()
+                          ? parseFloat(valorNegociado.replace(',', '.'))
+                          : valorCalculado
+                      )}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                O <span className="font-semibold text-emerald-700">valor negociado</span> é o que será considerado como{' '}
+                <span className="font-semibold">valor final do agendamento</span>. Se ficar em branco, o sistema usa automaticamente o{' '}
+                <span className="font-semibold">total calculado pela tabela de preços</span> da quadra (quando existir).
+              </p>
+            </div>
+
+            {/* Horários Ocupados */}
+            {quadraId && data && horariosOcupados.length > 0 && (
+              <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <div className="flex items-start gap-2 mb-2">
+                  <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-yellow-800 mb-1">
+                      Horários já ocupados neste dia:
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {horariosOcupados.map((horario, idx) => (
+                        <span
+                          key={idx}
+                          className="inline-block px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs font-medium"
+                        >
+                          {horario}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {erro && (
+              <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-700">{erro}</p>
+                </div>
+              </div>
+            )}
+
+            {conflito && !erro && (
+              <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-700">{conflito}</p>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-3 justify-end pt-4">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={salvando}
+                className="w-full sm:w-auto px-6 py-3 bg-gray-200 rounded-lg hover:bg-gray-300 text-gray-800 font-medium transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={salvando || !!conflito}
+                className="w-full sm:w-auto px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {salvando ? (
+                  <span className="flex items-center justify-center">
+                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Salvando...
+                  </span>
+                ) : (
+                  'Salvar Alterações'
+                )}
+              </button>
+            </div>
+          </form>
+        </Dialog.Panel>
+      </div>
+    </Dialog>
+  );
+}
+
