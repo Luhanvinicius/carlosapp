@@ -1,0 +1,22 @@
+// app/app/arena/page.tsx - Página index da arena (redireciona para agendamentos)
+'use client';
+
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+
+export default function ArenaIndexPage() {
+  const router = useRouter();
+
+  useEffect(() => {
+    router.replace('/app/arena/agendamentos');
+  }, [router]);
+
+  return (
+    <div className="flex items-center justify-center min-h-screen">
+      <div className="text-center">
+        <h1 className="text-2xl font-bold">Carregando...</h1>
+      </div>
+    </div>
+  );
+}
+
