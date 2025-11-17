@@ -6,9 +6,10 @@ import { getUsuarioFromRequest } from '@/lib/auth';
 // GET /api/agendamento/[id] - Obter agendamento por ID
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const result = await query(
       `SELECT 
         a.id, a."quadraId", a."usuarioId", a."atletaId", a."nomeAvulso", a."telefoneAvulso",
@@ -24,7 +25,7 @@ export async function GET(
       LEFT JOIN "User" u ON a."usuarioId" = u.id
       LEFT JOIN "Atleta" at ON a."atletaId" = at.id
       WHERE a.id = $1`,
-      [params.id]
+      [id]
     );
 
     if (result.rows.length === 0) {
@@ -85,9 +86,10 @@ export async function GET(
 // PUT /api/agendamento/[id] - Atualizar agendamento
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const usuario = await getUsuarioFromRequest(request);
     if (!usuario) {
       return NextResponse.json(
@@ -99,7 +101,7 @@ export async function PUT(
     // Verificar se o agendamento existe e se o usuário tem permissão
     const agendamentoCheck = await query(
       'SELECT "usuarioId", "quadraId" FROM "Agendamento" WHERE id = $1',
-      [params.id]
+      [id]
     );
 
     if (agendamentoCheck.rows.length === 0) {
@@ -148,7 +150,7 @@ export async function PUT(
            OR ("dataHora" + (duracao * INTERVAL '1 minute') >= $3 AND "dataHora" + (duracao * INTERVAL '1 minute') <= $4)
            OR ("dataHora" <= $3 AND "dataHora" + (duracao * INTERVAL '1 minute') >= $4)
          )`,
-        [agendamentoAtual.quadraId, params.id, dataHoraInicio.toISOString(), dataHoraFim.toISOString()]
+        [agendamentoAtual.quadraId, id, dataHoraInicio.toISOString(), dataHoraFim.toISOString()]
       );
 
       if (conflitos.rows.length > 0) {
@@ -255,7 +257,7 @@ export async function PUT(
     }
 
     updates.push(`"updatedAt" = NOW()`);
-    paramsUpdate.push(params.id);
+    paramsUpdate.push(id);
 
     const sql = `UPDATE "Agendamento"
                  SET ${updates.join(', ')}
@@ -282,7 +284,7 @@ export async function PUT(
       LEFT JOIN "User" u ON a."usuarioId" = u.id
       LEFT JOIN "Atleta" at ON a."atletaId" = at.id
       WHERE a.id = $1`,
-      [params.id]
+      [id]
     );
 
     const row = agendamentoCompleto.rows[0];
@@ -336,9 +338,10 @@ export async function PUT(
 // DELETE /api/agendamento/[id] - Deletar agendamento
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const usuario = await getUsuarioFromRequest(request);
     if (!usuario) {
       return NextResponse.json(
@@ -350,7 +353,7 @@ export async function DELETE(
     // Verificar se o agendamento existe e se o usuário tem permissão
     const agendamentoCheck = await query(
       'SELECT "usuarioId" FROM "Agendamento" WHERE id = $1',
-      [params.id]
+      [id]
     );
 
     if (agendamentoCheck.rows.length === 0) {
@@ -373,7 +376,7 @@ export async function DELETE(
 
     const result = await query(
       `DELETE FROM "Agendamento" WHERE id = $1 RETURNING id`,
-      [params.id]
+      [id]
     );
 
     return NextResponse.json({ mensagem: 'Agendamento deletado com sucesso' });

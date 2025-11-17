@@ -5,9 +5,10 @@ import { query } from '@/lib/db';
 // GET /api/quadra/[id] - Obter quadra por ID
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const result = await query(
       `SELECT 
         q.id, q.nome, q."pointId", q.tipo, q.capacidade, q.ativo, 
@@ -16,7 +17,7 @@ export async function GET(
       FROM "Quadra" q
       LEFT JOIN "Point" p ON q."pointId" = p.id
       WHERE q.id = $1`,
-      [params.id]
+      [id]
     );
 
     if (result.rows.length === 0) {
@@ -55,9 +56,10 @@ export async function GET(
 // PUT /api/quadra/[id] - Atualizar quadra
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const body = await request.json();
     const { nome, pointId, tipo, capacidade, ativo } = body;
 
@@ -84,7 +86,7 @@ export async function PUT(
        SET nome = $1, "pointId" = COALESCE($2, "pointId"), tipo = $3, capacidade = $4, ativo = $5, "updatedAt" = NOW()
        WHERE id = $6
        RETURNING id, nome, "pointId", tipo, capacidade, ativo, "createdAt", "updatedAt"`,
-      [nome, pointId || null, tipo || null, capacidade || null, ativo ?? true, params.id]
+      [nome, pointId || null, tipo || null, capacidade || null, ativo ?? true, id]
     );
 
     if (result.rows.length === 0) {
@@ -114,13 +116,14 @@ export async function PUT(
 // DELETE /api/quadra/[id] - Deletar quadra
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     // Verificar se há agendamentos vinculados
     const agendamentosResult = await query(
       `SELECT COUNT(*) as count FROM "Agendamento" WHERE "quadraId" = $1`,
-      [params.id]
+      [id]
     );
 
     if (parseInt(agendamentosResult.rows[0].count) > 0) {
@@ -132,7 +135,7 @@ export async function DELETE(
 
     const result = await query(
       `DELETE FROM "Quadra" WHERE id = $1 RETURNING id`,
-      [params.id]
+      [id]
     );
 
     if (result.rows.length === 0) {

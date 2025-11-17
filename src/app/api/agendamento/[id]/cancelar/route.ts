@@ -6,9 +6,10 @@ import { getUsuarioFromRequest } from '@/lib/auth';
 // POST /api/agendamento/[id]/cancelar - Cancelar agendamento
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const usuario = await getUsuarioFromRequest(request);
     if (!usuario) {
       return NextResponse.json(
@@ -20,7 +21,7 @@ export async function POST(
     // Verificar se o agendamento existe e se o usuário tem permissão
     const agendamentoCheck = await query(
       'SELECT "usuarioId", status FROM "Agendamento" WHERE id = $1',
-      [params.id]
+      [id]
     );
 
     if (agendamentoCheck.rows.length === 0) {
@@ -57,7 +58,7 @@ export async function POST(
        RETURNING id, "quadraId", "usuarioId", "atletaId", "nomeAvulso", "telefoneAvulso",
          "dataHora", duracao, "valorHora", "valorCalculado", "valorNegociado",
          status, observacoes, "createdAt", "updatedAt"`,
-      [params.id]
+      [id]
     );
 
     // Buscar dados relacionados para retorno completo
@@ -76,7 +77,7 @@ export async function POST(
       LEFT JOIN "User" u ON a."usuarioId" = u.id
       LEFT JOIN "Atleta" at ON a."atletaId" = at.id
       WHERE a.id = $1`,
-      [params.id]
+      [id]
     );
 
     const row = agendamentoCompleto.rows[0];

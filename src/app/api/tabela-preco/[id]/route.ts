@@ -5,16 +5,17 @@ import { query } from '@/lib/db';
 // PUT /api/tabela-preco/[id] - Atualizar tabela de preço
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const body = await request.json();
     const { horaInicio, horaFim, valorHora, ativo } = body;
 
     // Verificar se a tabela existe e obter quadraId
     const tabelaCheck = await query(
       'SELECT "quadraId", "inicioMinutoDia", "fimMinutoDia" FROM "TabelaPreco" WHERE id = $1',
-      [params.id]
+      [id]
     );
 
     if (tabelaCheck.rows.length === 0) {
@@ -56,7 +57,7 @@ export async function PUT(
            OR ($4 > "inicioMinutoDia" AND $4 <= "fimMinutoDia")
            OR ($3 <= "inicioMinutoDia" AND $4 >= "fimMinutoDia")
          )`,
-        [quadraId, params.id, inicioMinutoDia, fimMinutoDia]
+        [quadraId, id, inicioMinutoDia, fimMinutoDia]
       );
 
       if (sobreposicao.rows.length > 0) {
@@ -95,7 +96,7 @@ export async function PUT(
     }
 
     updates.push(`"updatedAt" = NOW()`);
-    paramsUpdate.push(params.id);
+    paramsUpdate.push(id);
 
     const sql = `UPDATE "TabelaPreco"
                  SET ${updates.join(', ')}
@@ -125,12 +126,13 @@ export async function PUT(
 // DELETE /api/tabela-preco/[id] - Deletar tabela de preço
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const result = await query(
       `DELETE FROM "TabelaPreco" WHERE id = $1 RETURNING id`,
-      [params.id]
+      [id]
     );
 
     if (result.rows.length === 0) {

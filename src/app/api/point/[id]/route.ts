@@ -5,16 +5,17 @@ import { query } from '@/lib/db';
 // GET /api/point/[id] - Obter point por ID
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const result = await query(
       `SELECT 
         id, nome, endereco, telefone, email, descricao, ativo, 
         "createdAt", "updatedAt"
       FROM "Point"
       WHERE id = $1`,
-      [params.id]
+      [id]
     );
 
     if (result.rows.length === 0) {
@@ -37,9 +38,10 @@ export async function GET(
 // PUT /api/point/[id] - Atualizar point
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const body = await request.json();
     const { nome, endereco, telefone, email, descricao, ativo } = body;
 
@@ -55,7 +57,7 @@ export async function PUT(
        SET nome = $1, endereco = $2, telefone = $3, email = $4, descricao = $5, ativo = $6, "updatedAt" = NOW()
        WHERE id = $7
        RETURNING id, nome, endereco, telefone, email, descricao, ativo, "createdAt", "updatedAt"`,
-      [nome, endereco || null, telefone || null, email || null, descricao || null, ativo ?? true, params.id]
+      [nome, endereco || null, telefone || null, email || null, descricao || null, ativo ?? true, id]
     );
 
     if (result.rows.length === 0) {
@@ -78,13 +80,14 @@ export async function PUT(
 // DELETE /api/point/[id] - Deletar point
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     // Verificar se há quadras vinculadas
     const quadrasResult = await query(
       `SELECT COUNT(*) as count FROM "Quadra" WHERE "pointId" = $1`,
-      [params.id]
+      [id]
     );
 
     if (parseInt(quadrasResult.rows[0].count) > 0) {
@@ -96,7 +99,7 @@ export async function DELETE(
 
     const result = await query(
       `DELETE FROM "Point" WHERE id = $1 RETURNING id`,
-      [params.id]
+      [id]
     );
 
     if (result.rows.length === 0) {
