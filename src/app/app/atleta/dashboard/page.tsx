@@ -68,11 +68,12 @@ export default function AtletaDashboardPage() {
   }, [partidas, periodo]);
 
   return (
-    <div className="space-y-6">
-      <div className="text-center mb-8">
-        <h1 className="text-4xl font-bold text-gray-900 mb-2">Dashboard</h1>
-        <p className="text-gray-600">Acompanhe seu desempenho e partidas</p>
-      </div>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-6 px-4">
+      <div className="max-w-6xl mx-auto space-y-6">
+        <div className="text-center mb-8">
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">Dashboard</h1>
+          <p className="text-gray-600">Acompanhe seu desempenho e partidas</p>
+        </div>
 
       {atleta && (
         <>
@@ -166,6 +167,13 @@ export default function AtletaDashboardPage() {
 
         </>
       )}
+
+      {!atleta && (
+        <div className="bg-white rounded-xl shadow-lg p-8 text-center">
+          <p className="text-gray-600">Carregando informações do atleta...</p>
+        </div>
+      )}
+      </div>
     </div>
   );
 }
