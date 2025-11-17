@@ -20,16 +20,16 @@ export interface AtualizarGestorPayload {
 
 export const userService = {
   listar: async (): Promise<UsuarioAdmin[]> => {
-    const res = await api.get<UsuarioAdmin[]>('/user/list');
-    return res.data;
+    const res = await api.get('/user/list');
+    return res.data as UsuarioAdmin[];
   },
 
   atualizarGestor: async (
     id: string | number,
     payload: AtualizarGestorPayload
   ): Promise<UsuarioAdmin> => {
-    const res = await api.put<UsuarioAdmin>(`/user/${id}/gestor`, payload);
-    return res.data;
+    const res = await api.put(`/user/${id}/gestor`, payload);
+    return res.data as UsuarioAdmin;
   },
 };
 
