@@ -433,6 +433,9 @@ export async function POST(request: NextRequest) {
       }
     };
 
+    // Variável para armazenar o ID do agendamento criado
+    let agendamentoId: string;
+
     // Se há recorrência, gerar todos os agendamentos
     if (recorrencia && recorrencia.tipo) {
       const dadosBase = {
@@ -500,7 +503,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Retornar o primeiro agendamento criado
-      var agendamentoId = idsCriados[0];
+      agendamentoId = idsCriados[0];
     } else {
       // Criar agendamento único (sem recorrência)
       const idCriado = await criarAgendamentoUnico(dataHoraLocal);
@@ -510,7 +513,7 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
-      var agendamentoId = idCriado;
+      agendamentoId = idCriado;
     }
 
     // Buscar dados relacionados para retorno completo
