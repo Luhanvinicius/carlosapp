@@ -1,10 +1,19 @@
 // app/api/quadra/route.ts - Rotas de API para Quadras (CRUD completo)
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { getUsuarioFromRequest, usuarioTemAcessoAoPoint } from '@/lib/auth';
 
 // GET /api/quadra - Listar todas as quadras (com filtro opcional por pointId)
 export async function GET(request: NextRequest) {
   try {
+    const usuario = await getUsuarioFromRequest(request);
+    if (!usuario) {
+      return NextResponse.json(
+        { mensagem: 'Não autenticado' },
+        { status: 401 }
+      );
+    }
+
     const { searchParams } = new URL(request.url);
     const pointId = searchParams.get('pointId');
 
@@ -16,9 +25,18 @@ export async function GET(request: NextRequest) {
     LEFT JOIN "Point" p ON q."pointId" = p.id`;
 
     const params: any[] = [];
-    if (pointId) {
-      sql += ` WHERE q."pointId" = $1`;
+    let paramCount = 1;
+
+    // Se for ORGANIZER, mostrar apenas quadras da sua arena
+    if (usuario.role === 'ORGANIZER' && usuario.pointIdGestor) {
+      sql += ` WHERE q."pointId" = $${paramCount}`;
+      params.push(usuario.pointIdGestor);
+      paramCount++;
+    } else if (pointId) {
+      // ADMIN pode filtrar por pointId se quiser
+      sql += ` WHERE q."pointId" = $${paramCount}`;
       params.push(pointId);
+      paramCount++;
     }
 
     sql += ` ORDER BY q.nome ASC`;
@@ -54,6 +72,22 @@ export async function GET(request: NextRequest) {
 // POST /api/quadra - Criar nova quadra
 export async function POST(request: NextRequest) {
   try {
+    const usuario = await getUsuarioFromRequest(request);
+    if (!usuario) {
+      return NextResponse.json(
+        { mensagem: 'Não autenticado' },
+        { status: 401 }
+      );
+    }
+
+    // Verificar permissões
+    if (usuario.role !== 'ADMIN' && usuario.role !== 'ORGANIZER') {
+      return NextResponse.json(
+        { mensagem: 'Apenas administradores e organizadores podem criar quadras' },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const { nome, pointId, tipo, capacidade, ativo = true } = body;
 
@@ -71,6 +105,17 @@ export async function POST(request: NextRequest) {
         { mensagem: 'Estabelecimento não encontrado' },
         { status: 404 }
       );
+    }
+
+    // Verificar se ORGANIZER tem acesso a este point
+    if (usuario.role === 'ORGANIZER') {
+      const temAcesso = usuarioTemAcessoAoPoint(usuario, pointId);
+      if (!temAcesso) {
+        return NextResponse.json(
+          { mensagem: 'Você não tem permissão para criar quadras nesta arena' },
+          { status: 403 }
+        );
+      }
     }
 
     const result = await query(

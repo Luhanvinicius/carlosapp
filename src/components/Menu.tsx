@@ -26,6 +26,7 @@ const Menu = () => {
     { path: '/perfil', label: 'Meu Perfil', roles: ['USER', 'ADMIN'] },
     { path: '/agendamentos', label: 'Agendamentos', roles: ['USER', 'ADMIN'] },
     { path: '/agendamentos/agenda', label: 'Agenda Semanal', roles: ['USER', 'ADMIN'] },
+    { path: '/app/arena', label: 'Área da Arena', roles: ['ORGANIZER'] },
     { path: '/usuarios', label: 'Usuários', roles: ['ADMIN'] },
     { path: '/atletas', label: 'Atletas', roles: ['ADMIN'] },
     { path: '/app/admin/points', label: 'Estabelecimentos', roles: ['ADMIN'] },

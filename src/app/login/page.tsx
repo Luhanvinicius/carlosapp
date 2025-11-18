@@ -43,15 +43,14 @@ export default function LoginPage() {
       }
 
       const usuarioData = data.usuario || data.user;
+      const tokenJWT = data.token; // Token JWT retornado pela API
       
-      // Configura Basic Auth
-      setBasicCreds({ email: email.trim().toLowerCase(), senha: password });
-
-      // Login via context
+      // Login via context (usa JWT como método preferido)
       login({
-        token: 'basic-mode',
+        token: tokenJWT || undefined, // Token JWT (método preferido)
         usuario: usuarioData,
-        basicCreds: { email: email.trim().toLowerCase(), senha: password },
+        // Basic Auth mantido como fallback (compatibilidade)
+        basicCreds: tokenJWT ? null : { email: email.trim().toLowerCase(), senha: password },
       });
 
       // Redireciona baseado no role

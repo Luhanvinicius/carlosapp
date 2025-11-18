@@ -31,5 +31,13 @@ export const userService = {
     const res = await api.put(`/user/${id}/gestor`, payload);
     return res.data as UsuarioAdmin;
   },
+
+  atualizar: async (
+    id: string | number,
+    payload: AtualizarGestorPayload
+  ): Promise<UsuarioAdmin> => {
+    const res = await api.put(`/user/${id}`, payload);
+    return res.data as UsuarioAdmin;
+  },
 };
 

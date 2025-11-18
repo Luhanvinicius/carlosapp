@@ -1,18 +1,38 @@
 // layouts/ArenaLayout.tsx - Layout da área da arena (100% igual ao cursor)
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
+import { pointService } from '@/services/agendamentoService';
 
 export default function ArenaLayout({ children }: { children: React.ReactNode }) {
   const { usuario, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const [nomeArena, setNomeArena] = useState<string>('Carlão BT Online');
+
+  useEffect(() => {
+    const carregarNomeArena = async () => {
+      if (usuario?.pointIdGestor) {
+        try {
+          const arena = await pointService.obter(usuario.pointIdGestor);
+          setNomeArena(arena.nome);
+        } catch (error) {
+          console.error('Erro ao carregar nome da arena:', error);
+          // Mantém o nome padrão em caso de erro
+        }
+      }
+    };
+
+    carregarNomeArena();
+  }, [usuario?.pointIdGestor]);
 
   const navItems = [
-    { to: '/app/arena/agendamentos', label: 'Agenda da Arena' },
+    { to: '/app/arena/agendamentos', label: 'Agenda' },
+    { to: '/app/arena/agendamentos/agenda', label: 'Agenda Semanal' },
     { to: '/app/arena/quadras', label: 'Minhas Quadras' },
     { to: '/app/arena/tabela-precos', label: 'Tabela de Preços' },
   ];
@@ -27,7 +47,7 @@ export default function ArenaLayout({ children }: { children: React.ReactNode })
       <header className="bg-white shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="text-xl font-bold text-emerald-600">Carlão BT Online</span>
+            <span className="text-xl font-bold text-emerald-600">{nomeArena}</span>
             <span className="text-xs px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 font-semibold">
               Área da Arena
             </span>

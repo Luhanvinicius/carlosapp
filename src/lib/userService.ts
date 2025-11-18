@@ -67,7 +67,85 @@ export const atualizarUsuario = async (id: string, dados: { name?: string; passw
 
 export const getUsuarioById = async (id: string) => {
   const result = await query(
-    'SELECT id, name, email, role FROM "User" WHERE id = $1',
+    'SELECT id, name, email, role, "pointIdGestor" FROM "User" WHERE id = $1',
+    [id]
+  );
+  return result.rows[0] || null;
+};
+
+export const getUsuarioByEmail = async (email: string) => {
+  const result = await query(
+    'SELECT id, name, email, role FROM "User" WHERE email = $1',
+    [email.toLowerCase().trim()]
+  );
+  return result.rows[0] || null;
+};
+
+export const atualizarUsuarioAdmin = async (
+  id: string,
+  dados: {
+    name?: string;
+    email?: string;
+    password?: string;
+    role?: string;
+    pointIdGestor?: string | null;
+  }
+) => {
+  const updates: string[] = [];
+  const values: any[] = [];
+  let paramIndex = 1;
+
+  if (dados.name !== undefined && dados.name !== null) {
+    updates.push(`name = $${paramIndex++}`);
+    values.push(dados.name);
+  }
+  if (dados.email !== undefined && dados.email !== null) {
+    updates.push(`email = $${paramIndex++}`);
+    values.push(dados.email.toLowerCase().trim());
+  }
+  // Processar senha - só atualiza se fornecida e não vazia
+  if (dados.password !== undefined && dados.password !== null) {
+    const senhaTrimmed = typeof dados.password === 'string' ? dados.password.trim() : '';
+    if (senhaTrimmed !== '') {
+      const hash = await bcrypt.hash(senhaTrimmed, 10);
+      updates.push(`password = $${paramIndex++}`);
+      values.push(hash);
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Hash de senha gerado para atualização do usuário:', id);
+      }
+    } else if (process.env.NODE_ENV === 'development') {
+      console.log('Senha vazia - não será atualizada');
+    }
+  }
+  if (dados.role !== undefined && dados.role !== null) {
+    updates.push(`role = $${paramIndex++}`);
+    values.push(dados.role);
+  }
+  if (dados.pointIdGestor !== undefined) {
+    updates.push(`"pointIdGestor" = $${paramIndex++}`);
+    values.push(dados.pointIdGestor);
+  }
+
+  if (updates.length === 0) {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Nenhuma atualização para fazer');
+    }
+    return null;
+  }
+
+  values.push(id);
+
+  if (process.env.NODE_ENV === 'development') {
+    console.log('Executando UPDATE com', updates.length, 'campos');
+  }
+
+  await query(
+    `UPDATE "User" SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
+    values
+  );
+
+  const result = await query(
+    'SELECT id, name, email, role, "pointIdGestor", "createdAt" FROM "User" WHERE id = $1',
     [id]
   );
   return result.rows[0] || null;

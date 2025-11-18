@@ -7,7 +7,8 @@ import { useAuth } from '@/context/AuthContext';
 import { pointService, quadraService, agendamentoService } from '@/services/agendamentoService';
 import { api } from '@/lib/api';
 import type { Agendamento, ModoAgendamento } from '@/types/agendamento';
-import { Calendar, Clock, MapPin, AlertCircle, User, Users, UserPlus } from 'lucide-react';
+import { Calendar, Clock, MapPin, AlertCircle, User, Users, UserPlus, Repeat } from 'lucide-react';
+import type { RecorrenciaConfig, TipoRecorrencia } from '@/types/agendamento';
 
 interface Atleta {
   id: string;
@@ -61,21 +62,35 @@ export default function EditarAgendamentoModal({
   const [telefoneAvulso, setTelefoneAvulso] = useState('');
   const [buscaAtleta, setBuscaAtleta] = useState('');
 
+  // Campos de recorrência
+  const [temRecorrencia, setTemRecorrencia] = useState(false);
+  const [tipoRecorrencia, setTipoRecorrencia] = useState<TipoRecorrencia>(null);
+  const [intervaloRecorrencia, setIntervaloRecorrencia] = useState(1);
+  const [diasSemanaRecorrencia, setDiasSemanaRecorrencia] = useState<number[]>([]);
+  const [diaMesRecorrencia, setDiaMesRecorrencia] = useState<number>(1);
+  const [dataFimRecorrencia, setDataFimRecorrencia] = useState('');
+  const [quantidadeOcorrencias, setQuantidadeOcorrencias] = useState<number>(12);
+
   useEffect(() => {
-    if (isOpen && agendamento) {
+    if (isOpen) {
       carregarDados();
-      preencherFormulario();
+      if (agendamento) {
+        preencherFormulario();
+      } else {
+        // Modo criação - resetar formulário
+        resetarFormulario();
+      }
     }
   }, [isOpen, agendamento]);
 
   useEffect(() => {
-    if (pointId) {
+    if (pointId && !isOrganizer) {
       carregarQuadras(pointId);
     }
   }, [pointId]);
 
   useEffect(() => {
-    if (quadraId && data && agendamento) {
+    if (quadraId && data) {
       verificarDisponibilidade();
     }
   }, [quadraId, data]);
@@ -105,19 +120,13 @@ export default function EditarAgendamentoModal({
 
   const carregarDados = async () => {
     try {
-      const [pointsData, atletasData] = await Promise.all([
-        pointService.listar(),
-        canGerenciarAgendamento && agendamento
+      const [pointsData, atletasData, quadrasData] = await Promise.all([
+        isAdmin ? pointService.listar() : Promise.resolve([]),
+        canGerenciarAgendamento
           ? (async () => {
               try {
-                const params: Record<string, string> = {};
-                if (!isAdmin && agendamento?.quadra?.point?.id) {
-                  params.pointId = agendamento.quadra.point.id;
-                }
-                const queryString = Object.keys(params).length > 0 
-                  ? `?${new URLSearchParams(params).toString()}` 
-                  : '';
-                const res = await api.get(`/atleta/listarAtletas${queryString}`);
+                // Para ORGANIZER e ADMIN, não precisa passar parâmetros - a API já retorna todos os atletas
+                const res = await api.get(`/atleta/listarAtletas`);
                 const data = Array.isArray(res.data) ? res.data : res.data?.atletas || [];
                 return data;
               } catch (error) {
@@ -126,6 +135,7 @@ export default function EditarAgendamentoModal({
               }
             })()
           : Promise.resolve([] as Atleta[]),
+        isOrganizer ? quadraService.listar() : Promise.resolve([]),
       ]);
 
       setPoints(pointsData.filter((p: any) => p.ativo));
@@ -134,9 +144,32 @@ export default function EditarAgendamentoModal({
         setAtletas(atletasData as Atleta[]);
         setCarregandoAtletas(false);
       }
+      // Se for ORGANIZER, carregar quadras diretamente
+      if (isOrganizer && quadrasData.length > 0) {
+        setQuadras((quadrasData as any[]).filter((q: any) => q.ativo));
+      }
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
     }
+  };
+
+  const resetarFormulario = () => {
+    setPointId('');
+    setQuadraId('');
+    setData('');
+    setHora('');
+    setDuracao(60);
+    setObservacoes('');
+    setValorHora(null);
+    setValorCalculado(null);
+    setValorNegociado('');
+    setAtletaId('');
+    setNomeAvulso('');
+    setTelefoneAvulso('');
+    setBuscaAtleta('');
+    setModo('normal');
+    setAgendamentosExistentes([]);
+    setErro('');
   };
 
   const preencherFormulario = () => {
@@ -183,7 +216,7 @@ export default function EditarAgendamentoModal({
   };
 
   const verificarDisponibilidade = async () => {
-    if (!quadraId || !data || !agendamento) return;
+    if (!quadraId || !data) return;
 
     try {
       const dataInicio = `${data}T00:00:00`;
@@ -197,9 +230,13 @@ export default function EditarAgendamentoModal({
       });
 
       // Remove o agendamento atual da lista (para não considerar conflito com ele mesmo)
-      setAgendamentosExistentes(
-        agendamentos.filter((ag) => ag.id !== agendamento.id)
-      );
+      if (agendamento) {
+        setAgendamentosExistentes(
+          agendamentos.filter((ag) => ag.id !== agendamento.id)
+        );
+      } else {
+        setAgendamentosExistentes(agendamentos);
+      }
     } catch (error) {
       console.error('Erro ao verificar disponibilidade:', error);
     }
@@ -249,6 +286,11 @@ export default function EditarAgendamentoModal({
       return 'Preencha todos os campos obrigatórios';
     }
 
+    // Para ADMIN, pointId é obrigatório
+    if (isAdmin && !pointId) {
+      return 'Selecione um estabelecimento';
+    }
+
     if (modo === 'atleta' && !atletaId) {
       return 'Selecione um atleta';
     }
@@ -266,12 +308,21 @@ export default function EditarAgendamentoModal({
       }
     }
 
+    // Validação de recorrência
+    if (temRecorrencia && !agendamento) {
+      if (!tipoRecorrencia) {
+        return 'Selecione o tipo de recorrência';
+      }
+      if (tipoRecorrencia === 'SEMANAL' && diasSemanaRecorrencia.length === 0) {
+        return 'Selecione pelo menos um dia da semana para recorrência semanal';
+      }
+    }
+
     return null;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!agendamento) return;
 
     setErro('');
 
@@ -292,6 +343,7 @@ export default function EditarAgendamentoModal({
     try {
       const dataHora = `${data}T${hora}:00`;
       const payload: any = {
+        quadraId,
         dataHora,
         duracao,
         observacoes: observacoes || undefined,
@@ -317,9 +369,7 @@ export default function EditarAgendamentoModal({
         }
       }
 
-      // Atualização de valor negociado (ADMIN e ORGANIZER podem informar).
-      // Se o campo estiver em branco, não enviamos `valorNegociado` para o backend,
-      // assim ele recalcula `valorHora` e `valorCalculado` e, se aplicável, define o novo valorNegociado.
+      // Valor negociado (ADMIN e ORGANIZER podem informar)
       if (canGerenciarAgendamento && valorNegociado.trim()) {
         const valor = parseFloat(valorNegociado.replace(',', '.'));
         if (!isNaN(valor) && valor > 0) {
@@ -327,25 +377,56 @@ export default function EditarAgendamentoModal({
         }
       }
 
-      const atualizado = await agendamentoService.atualizar(agendamento.id, payload);
+      // Configuração de recorrência (apenas para criação)
+      if (!agendamento && temRecorrencia && tipoRecorrencia) {
+        const recorrenciaConfig: RecorrenciaConfig = {
+          tipo: tipoRecorrencia,
+          intervalo: intervaloRecorrencia,
+        };
+
+        if (tipoRecorrencia === 'SEMANAL' && diasSemanaRecorrencia.length > 0) {
+          recorrenciaConfig.diasSemana = diasSemanaRecorrencia;
+        }
+
+        if (tipoRecorrencia === 'MENSAL' && diaMesRecorrencia) {
+          recorrenciaConfig.diaMes = diaMesRecorrencia;
+        }
+
+        if (dataFimRecorrencia) {
+          recorrenciaConfig.dataFim = `${dataFimRecorrencia}T23:59:59`;
+        } else if (quantidadeOcorrencias) {
+          recorrenciaConfig.quantidadeOcorrencias = quantidadeOcorrencias;
+        }
+
+        payload.recorrencia = recorrenciaConfig;
+      }
+
+      let resultado;
+      if (agendamento) {
+        // Modo edição
+        resultado = await agendamentoService.atualizar(agendamento.id, payload);
+      } else {
+        // Modo criação
+        resultado = await agendamentoService.criar(payload);
+      }
 
       // Atualiza os valores exibidos com o retorno do backend (recalculado)
-      setValorHora(atualizado.valorHora ?? null);
-      setValorCalculado(atualizado.valorCalculado ?? null);
+      setValorHora(resultado.valorHora ?? null);
+      setValorCalculado(resultado.valorCalculado ?? null);
       setValorNegociado(
-        atualizado.valorNegociado != null
-          ? atualizado.valorNegociado.toString().replace('.', ',')
+        resultado.valorNegociado != null
+          ? resultado.valorNegociado.toString().replace('.', ',')
           : ''
       );
 
       onSuccess();
       onClose();
     } catch (error: any) {
-      console.error('Erro ao atualizar agendamento:', error);
+      console.error(`Erro ao ${agendamento ? 'atualizar' : 'criar'} agendamento:`, error);
       setErro(
         error?.response?.data?.mensagem ||
           error?.data?.mensagem ||
-          'Erro ao atualizar agendamento. Tente novamente.'
+          `Erro ao ${agendamento ? 'atualizar' : 'criar'} agendamento. Tente novamente.`
       );
     } finally {
       setSalvando(false);
@@ -372,7 +453,7 @@ export default function EditarAgendamentoModal({
       ? '—'
       : new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
-  if (!isOpen || !agendamento) return null;
+  if (!isOpen) return null;
 
   return (
     <Dialog open={isOpen} onClose={onClose} className="relative z-50">
@@ -380,10 +461,12 @@ export default function EditarAgendamentoModal({
       <div className="fixed inset-0 flex items-center justify-center p-4">
         <Dialog.Panel className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
           <Dialog.Title className="text-2xl font-bold text-gray-900 mb-2">
-            Editar Agendamento
+            {agendamento ? 'Editar Agendamento' : 'Novo Agendamento'}
           </Dialog.Title>
           <p className="text-sm text-gray-600 mb-6">
-            Atualize as informações do agendamento
+            {agendamento
+              ? 'Atualize as informações do agendamento'
+              : 'Preencha os dados para criar um novo agendamento'}
           </p>
 
           {/* Seletor de Modo (apenas para admin/organizador) */}
@@ -540,7 +623,7 @@ export default function EditarAgendamentoModal({
                   </select>
                 ) : (
                   <div className="w-full px-4 py-3 border border-gray-200 rounded-lg bg-gray-50 text-sm text-gray-700">
-                    {agendamento.quadra.point?.nome || 'Arena do gestor'}
+                    {isOrganizer ? 'Arena do gestor' : agendamento?.quadra?.point?.nome || 'Selecione um estabelecimento'}
                   </div>
                 )}
               </div>
@@ -551,7 +634,7 @@ export default function EditarAgendamentoModal({
                   value={quadraId}
                   onChange={(e) => setQuadraId(e.target.value)}
                   required
-                  disabled={!pointId}
+                  disabled={!pointId && !isOrganizer}
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
                 >
                   <option value="">Selecione uma quadra</option>
@@ -722,6 +805,155 @@ export default function EditarAgendamentoModal({
               </div>
             )}
 
+            {/* Seção de Recorrência (apenas para criação) */}
+            {!agendamento && (
+              <div className="p-4 bg-purple-50 rounded-lg border border-purple-200">
+                <div className="flex items-center gap-2 mb-3">
+                  <input
+                    type="checkbox"
+                    id="temRecorrencia"
+                    checked={temRecorrencia}
+                    onChange={(e) => {
+                      setTemRecorrencia(e.target.checked);
+                      if (!e.target.checked) {
+                        setTipoRecorrencia(null);
+                      }
+                    }}
+                    className="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+                  />
+                  <label htmlFor="temRecorrencia" className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer">
+                    <Repeat className="w-4 h-4 text-purple-600" />
+                    Agendamento Recorrente
+                  </label>
+                </div>
+
+                {temRecorrencia && (
+                  <div className="space-y-4 mt-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Recorrência *</label>
+                      <select
+                        value={tipoRecorrencia || ''}
+                        onChange={(e) => setTipoRecorrencia(e.target.value as TipoRecorrencia || null)}
+                        required
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+                      >
+                        <option value="">Selecione o tipo</option>
+                        <option value="DIARIO">Diário</option>
+                        <option value="SEMANAL">Semanal</option>
+                        <option value="MENSAL">Mensal</option>
+                      </select>
+                    </div>
+
+                    {tipoRecorrencia && (
+                      <>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Intervalo {tipoRecorrencia === 'DIARIO' ? '(dias)' : tipoRecorrencia === 'SEMANAL' ? '(semanas)' : '(meses)'}
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={intervaloRecorrencia}
+                            onChange={(e) => setIntervaloRecorrencia(Math.max(1, parseInt(e.target.value) || 1))}
+                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+                          />
+                        </div>
+
+                        {tipoRecorrencia === 'SEMANAL' && (
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Dias da Semana *</label>
+                            <div className="grid grid-cols-7 gap-2">
+                              {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((dia, idx) => (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  onClick={() => {
+                                    if (diasSemanaRecorrencia.includes(idx)) {
+                                      setDiasSemanaRecorrencia(diasSemanaRecorrencia.filter(d => d !== idx));
+                                    } else {
+                                      setDiasSemanaRecorrencia([...diasSemanaRecorrencia, idx]);
+                                    }
+                                  }}
+                                  className={`px-3 py-2 rounded-lg border-2 transition-all ${
+                                    diasSemanaRecorrencia.includes(idx)
+                                      ? 'border-purple-600 bg-purple-100 text-purple-700 font-semibold'
+                                      : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                                  }`}
+                                >
+                                  {dia}
+                                </button>
+                              ))}
+                            </div>
+                            {diasSemanaRecorrencia.length === 0 && (
+                              <p className="mt-1 text-xs text-red-600">Selecione pelo menos um dia da semana</p>
+                            )}
+                          </div>
+                        )}
+
+                        {tipoRecorrencia === 'MENSAL' && (
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Dia do Mês</label>
+                            <input
+                              type="number"
+                              min="1"
+                              max="31"
+                              value={diaMesRecorrencia}
+                              onChange={(e) => setDiaMesRecorrencia(Math.min(31, Math.max(1, parseInt(e.target.value) || 1)))}
+                              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+                            />
+                            <p className="mt-1 text-xs text-gray-500">Deixe vazio para usar o mesmo dia do mês da data inicial</p>
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Data de Término (opcional)</label>
+                            <input
+                              type="date"
+                              value={dataFimRecorrencia}
+                              onChange={(e) => {
+                                setDataFimRecorrencia(e.target.value);
+                                if (e.target.value) {
+                                  setQuantidadeOcorrencias(0);
+                                }
+                              }}
+                              min={data}
+                              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Quantidade de Ocorrências (opcional)</label>
+                            <input
+                              type="number"
+                              min="1"
+                              max="365"
+                              value={quantidadeOcorrencias}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value) || 0;
+                                setQuantidadeOcorrencias(val);
+                                if (val > 0) {
+                                  setDataFimRecorrencia('');
+                                }
+                              }}
+                              disabled={!!dataFimRecorrencia}
+                              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none disabled:bg-gray-100"
+                            />
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-500">
+                          {dataFimRecorrencia
+                            ? `A recorrência terminará em ${new Date(dataFimRecorrencia).toLocaleDateString('pt-BR')}`
+                            : quantidadeOcorrencias > 0
+                            ? `Serão criados ${quantidadeOcorrencias} agendamento(s)`
+                            : 'A recorrência continuará até ser cancelada manualmente'}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="flex flex-col sm:flex-row gap-3 justify-end pt-4">
               <button
                 type="button"
@@ -744,8 +976,10 @@ export default function EditarAgendamentoModal({
                     </svg>
                     Salvando...
                   </span>
-                ) : (
+                ) : agendamento ? (
                   'Salvar Alterações'
+                ) : (
+                  'Criar Agendamento'
                 )}
               </button>
             </div>

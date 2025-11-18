@@ -1,10 +1,19 @@
 // app/api/tabela-preco/route.ts - Rotas de API para TabelaPreco (CRUD completo)
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { getUsuarioFromRequest, usuarioTemAcessoAQuadra } from '@/lib/auth';
 
 // GET /api/tabela-preco - Listar todas as tabelas de preço (com filtro opcional por quadraId)
 export async function GET(request: NextRequest) {
   try {
+    const usuario = await getUsuarioFromRequest(request);
+    if (!usuario) {
+      return NextResponse.json(
+        { mensagem: 'Não autenticado' },
+        { status: 401 }
+      );
+    }
+
     const { searchParams } = new URL(request.url);
     const quadraId = searchParams.get('quadraId');
 
@@ -16,9 +25,23 @@ export async function GET(request: NextRequest) {
     LEFT JOIN "Quadra" q ON tp."quadraId" = q.id`;
 
     const params: any[] = [];
-    if (quadraId) {
-      sql += ` WHERE tp."quadraId" = $1`;
+    let paramCount = 1;
+
+    // Se for ORGANIZER, mostrar apenas tabelas de preço das quadras da sua arena
+    if (usuario.role === 'ORGANIZER' && usuario.pointIdGestor) {
+      sql += ` WHERE q."pointId" = $${paramCount}`;
+      params.push(usuario.pointIdGestor);
+      paramCount++;
+      
+      if (quadraId) {
+        sql += ` AND tp."quadraId" = $${paramCount}`;
+        params.push(quadraId);
+        paramCount++;
+      }
+    } else if (quadraId) {
+      sql += ` WHERE tp."quadraId" = $${paramCount}`;
       params.push(quadraId);
+      paramCount++;
     }
 
     sql += ` ORDER BY tp."inicioMinutoDia" ASC`;
@@ -55,6 +78,22 @@ export async function GET(request: NextRequest) {
 // POST /api/tabela-preco - Criar nova tabela de preço
 export async function POST(request: NextRequest) {
   try {
+    const usuario = await getUsuarioFromRequest(request);
+    if (!usuario) {
+      return NextResponse.json(
+        { mensagem: 'Não autenticado' },
+        { status: 401 }
+      );
+    }
+
+    // Verificar permissões
+    if (usuario.role !== 'ADMIN' && usuario.role !== 'ORGANIZER') {
+      return NextResponse.json(
+        { mensagem: 'Apenas administradores e organizadores podem criar tabelas de preço' },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const { quadraId, horaInicio, horaFim, valorHora, ativo = true } = body;
 
@@ -72,6 +111,17 @@ export async function POST(request: NextRequest) {
         { mensagem: 'Quadra não encontrada' },
         { status: 404 }
       );
+    }
+
+    // Verificar se ORGANIZER tem acesso a esta quadra
+    if (usuario.role === 'ORGANIZER') {
+      const temAcesso = await usuarioTemAcessoAQuadra(usuario, quadraId);
+      if (!temAcesso) {
+        return NextResponse.json(
+          { mensagem: 'Você não tem permissão para criar tabelas de preço para esta quadra' },
+          { status: 403 }
+        );
+      }
     }
 
     // Converter horaInicio e horaFim para minutos desde 00:00

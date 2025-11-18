@@ -1,6 +1,7 @@
 // app/api/tabela-preco/[id]/route.ts - Rotas de API para TabelaPreco individual (PUT, DELETE)
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { getUsuarioFromRequest, usuarioTemAcessoAQuadra } from '@/lib/auth';
 
 // PUT /api/tabela-preco/[id] - Atualizar tabela de preço
 export async function PUT(
@@ -9,6 +10,22 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
+    const usuario = await getUsuarioFromRequest(request);
+    if (!usuario) {
+      return NextResponse.json(
+        { mensagem: 'Não autenticado' },
+        { status: 401 }
+      );
+    }
+
+    // Verificar permissões
+    if (usuario.role !== 'ADMIN' && usuario.role !== 'ORGANIZER') {
+      return NextResponse.json(
+        { mensagem: 'Apenas administradores e organizadores podem editar tabelas de preço' },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const { horaInicio, horaFim, valorHora, ativo } = body;
 
@@ -27,6 +44,17 @@ export async function PUT(
 
     const tabelaAtual = tabelaCheck.rows[0];
     const quadraId = tabelaAtual.quadraId;
+
+    // Verificar se ORGANIZER tem acesso a esta quadra
+    if (usuario.role === 'ORGANIZER') {
+      const temAcesso = await usuarioTemAcessoAQuadra(usuario, quadraId);
+      if (!temAcesso) {
+        return NextResponse.json(
+          { mensagem: 'Você não tem permissão para editar esta tabela de preço' },
+          { status: 403 }
+        );
+      }
+    }
 
     // Montar campos de atualização
     const updates: string[] = [];
@@ -130,6 +158,47 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
+    const usuario = await getUsuarioFromRequest(request);
+    if (!usuario) {
+      return NextResponse.json(
+        { mensagem: 'Não autenticado' },
+        { status: 401 }
+      );
+    }
+
+    // Verificar permissões
+    if (usuario.role !== 'ADMIN' && usuario.role !== 'ORGANIZER') {
+      return NextResponse.json(
+        { mensagem: 'Apenas administradores e organizadores podem deletar tabelas de preço' },
+        { status: 403 }
+      );
+    }
+
+    // Verificar se a tabela existe e obter quadraId
+    const tabelaCheck = await query(
+      'SELECT "quadraId" FROM "TabelaPreco" WHERE id = $1',
+      [id]
+    );
+
+    if (tabelaCheck.rows.length === 0) {
+      return NextResponse.json(
+        { mensagem: 'Tabela de preço não encontrada' },
+        { status: 404 }
+      );
+    }
+
+    // Verificar se ORGANIZER tem acesso a esta quadra
+    if (usuario.role === 'ORGANIZER') {
+      const quadraId = tabelaCheck.rows[0].quadraId;
+      const temAcesso = await usuarioTemAcessoAQuadra(usuario, quadraId);
+      if (!temAcesso) {
+        return NextResponse.json(
+          { mensagem: 'Você não tem permissão para deletar esta tabela de preço' },
+          { status: 403 }
+        );
+      }
+    }
+
     const result = await query(
       `DELETE FROM "TabelaPreco" WHERE id = $1 RETURNING id`,
       [id]

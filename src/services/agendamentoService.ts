@@ -98,8 +98,8 @@ export const agendamentoService = {
     return res.data;
   },
 
-  cancelar: async (id: string): Promise<Agendamento> => {
-    const res = await api.post(`/agendamento/${id}/cancelar`, {});
+  cancelar: async (id: string, aplicarARecorrencia: boolean = false): Promise<Agendamento> => {
+    const res = await api.post(`/agendamento/${id}/cancelar`, { aplicarARecorrencia });
     return res.data;
   },
 

@@ -5,7 +5,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { userService, type UsuarioAdmin } from '@/services/userService';
 import { pointService } from '@/services/agendamentoService';
 import type { Point } from '@/types/agendamento';
-import { RefreshCcw, User as UserIcon } from 'lucide-react';
+import { RefreshCcw, User as UserIcon, AlertCircle, Edit3, X } from 'lucide-react';
+
+interface EditarUsuarioForm {
+  name: string;
+  email: string;
+  password: string;
+  role: 'ADMIN' | 'USER' | 'ORGANIZER';
+  pointIdGestor: string;
+}
 
 export default function AdminUsuariosPage() {
   const [usuarios, setUsuarios] = useState<UsuarioAdmin[]>([]);
@@ -14,6 +22,17 @@ export default function AdminUsuariosPage() {
   const [filtroRole, setFiltroRole] = useState<'' | 'ADMIN' | 'USER' | 'ORGANIZER'>('');
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState('');
+  const [modalEditarAberto, setModalEditarAberto] = useState(false);
+  const [usuarioEditando, setUsuarioEditando] = useState<UsuarioAdmin | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const [erroEdit, setErroEdit] = useState('');
+  const [formEdit, setFormEdit] = useState<EditarUsuarioForm>({
+    name: '',
+    email: '',
+    password: '',
+    role: 'USER',
+    pointIdGestor: '',
+  });
 
   const carregarDados = async () => {
     try {
@@ -52,6 +71,75 @@ export default function AdminUsuariosPage() {
       }),
     [usuarios, busca, filtroRole]
   );
+
+  const abrirModalEditar = (usuario: UsuarioAdmin) => {
+    setUsuarioEditando(usuario);
+    setFormEdit({
+      name: usuario.name,
+      email: usuario.email,
+      password: '',
+      role: usuario.role as 'ADMIN' | 'USER' | 'ORGANIZER',
+      pointIdGestor: usuario.pointIdGestor || '',
+    });
+    setErroEdit('');
+    setModalEditarAberto(true);
+  };
+
+  const fecharModalEditar = () => {
+    setModalEditarAberto(false);
+    setUsuarioEditando(null);
+    setFormEdit({
+      name: '',
+      email: '',
+      password: '',
+      role: 'USER',
+      pointIdGestor: '',
+    });
+    setErroEdit('');
+  };
+
+  const handleSalvarEdicao = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!usuarioEditando) return;
+
+    setErroEdit('');
+    setSalvando(true);
+
+    try {
+      const payload: any = {
+        name: formEdit.name,
+        email: formEdit.email,
+        role: formEdit.role,
+        pointIdGestor: formEdit.pointIdGestor || null,
+      };
+      
+      // Só envia senha se foi preenchida
+      const senhaTrimmed = formEdit.password.trim();
+      if (senhaTrimmed) {
+        payload.password = senhaTrimmed;
+        console.log('Senha será enviada para atualização (tamanho:', senhaTrimmed.length, ')');
+      } else {
+        console.log('Senha não preenchida - não será atualizada');
+      }
+
+      console.log('Payload de atualização:', { ...payload, password: payload.password ? '***' : undefined });
+
+      await userService.atualizar(usuarioEditando.id, payload);
+
+      await carregarDados();
+      fecharModalEditar();
+    } catch (error: any) {
+      console.error('Erro ao atualizar usuário:', error);
+      setErroEdit(
+        error?.response?.data?.mensagem ||
+          error?.response?.data?.error ||
+          error?.data?.mensagem ||
+          'Erro ao atualizar usuário. Tente novamente.'
+      );
+    } finally {
+      setSalvando(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -172,12 +260,10 @@ export default function AdminUsuariosPage() {
                       <td className="px-3 py-2 text-right text-xs">
                         <button
                           type="button"
-                          onClick={() => {
-                            // Modal será implementado quando necessário
-                            alert('Funcionalidade de edição será implementada em breve');
-                          }}
-                          className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700"
+                          onClick={() => abrirModalEditar(user)}
+                          className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition-colors"
                         >
+                          <Edit3 className="w-3.5 h-3.5 mr-1.5" />
                           Editar
                         </button>
                       </td>
@@ -189,6 +275,161 @@ export default function AdminUsuariosPage() {
           </div>
         )}
       </div>
+
+      {/* Modal de edição */}
+      {modalEditarAberto && usuarioEditando && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 sm:p-8 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900">Editar Usuário</h2>
+              <button
+                type="button"
+                onClick={fecharModalEditar}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-sm text-gray-600 mb-6">
+              Atualize os dados do usuário. Deixe a senha em branco para não alterá-la.
+            </p>
+
+            <form onSubmit={handleSalvarEdicao} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Nome completo *
+                </label>
+                <input
+                  type="text"
+                  value={formEdit.name}
+                  onChange={(e) =>
+                    setFormEdit((f) => ({
+                      ...f,
+                      name: e.target.value,
+                    }))
+                  }
+                  required
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Email *
+                </label>
+                <input
+                  type="email"
+                  value={formEdit.email}
+                  onChange={(e) =>
+                    setFormEdit((f) => ({
+                      ...f,
+                      email: e.target.value,
+                    }))
+                  }
+                  required
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Nova senha (opcional)
+                </label>
+                <input
+                  type="password"
+                  value={formEdit.password}
+                  onChange={(e) =>
+                    setFormEdit((f) => ({
+                      ...f,
+                      password: e.target.value,
+                    }))
+                  }
+                  placeholder="Informe apenas se desejar alterar a senha"
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Deixe em branco para manter a senha atual
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Perfil (Role) *
+                </label>
+                <select
+                  value={formEdit.role}
+                  onChange={(e) =>
+                    setFormEdit((f) => ({
+                      ...f,
+                      role: e.target.value as 'ADMIN' | 'USER' | 'ORGANIZER',
+                    }))
+                  }
+                  required
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                >
+                  <option value="USER">USER</option>
+                  <option value="ADMIN">ADMIN</option>
+                  <option value="ORGANIZER">ORGANIZER</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Arena / Point (apenas para ORGANIZER)
+                </label>
+                <select
+                  value={formEdit.pointIdGestor}
+                  onChange={(e) =>
+                    setFormEdit((f) => ({
+                      ...f,
+                      pointIdGestor: e.target.value,
+                    }))
+                  }
+                  disabled={formEdit.role !== 'ORGANIZER'}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                >
+                  <option value="">Nenhuma (ou não aplicável)</option>
+                  {points.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.nome}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  {formEdit.role === 'ORGANIZER'
+                    ? 'Selecione a arena que este organizador irá gerenciar.'
+                    : 'Arena só é aplicável para usuários com perfil ORGANIZER.'}
+                </p>
+              </div>
+
+              {erroEdit && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-sm text-red-700">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>{erroEdit}</span>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={fecharModalEditar}
+                  disabled={salvando}
+                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-sm font-medium hover:bg-gray-300 disabled:opacity-50 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={salvando}
+                  className="px-5 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {salvando ? 'Salvando...' : 'Salvar alterações'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

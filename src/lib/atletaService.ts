@@ -36,24 +36,40 @@ export async function criarAtleta(usuarioId: string, dados: {
   };
 }
 
-export async function listarAtletas(usuario: { id: string; role: string }) {
-  const result = usuario.role === "ADMIN"
-    ? await query(
-        `SELECT a.*, u.name as "usuarioName", u.role as "usuarioRole" 
-         FROM "Atleta" a 
-         LEFT JOIN "User" u ON a."usuarioId" = u.id 
-         ORDER BY a.nome ASC`,
-        []
-      )
-    : await query(
-        `SELECT a.*, u.name as "usuarioName", u.role as "usuarioRole" 
-         FROM "Atleta" a 
-         LEFT JOIN "User" u ON a."usuarioId" = u.id 
-         WHERE a."usuarioId" = $1
-         ORDER BY a.nome ASC`,
-        [usuario.id]
-      );
-      
+export async function listarAtletas(usuario: { id: string; role: string; pointIdGestor?: string | null }) {
+  // ADMIN e ORGANIZER podem ver todos os atletas
+  // ORGANIZER pode ver todos os atletas para poder agendar para qualquer um na sua arena
+  if (usuario.role === "ADMIN" || usuario.role === "ORGANIZER") {
+    const result = await query(
+      `SELECT DISTINCT a.*, u.name as "usuarioName", u.role as "usuarioRole" 
+       FROM "Atleta" a 
+       LEFT JOIN "User" u ON a."usuarioId" = u.id 
+       ORDER BY a.nome ASC`,
+      []
+    );
+    
+    const atletas = result.rows.map((row: any) => ({
+      ...row,
+      usuario: row.usuarioName ? { name: row.usuarioName, role: row.usuarioRole } : null,
+      idade: calcularIdade(row.dataNascimento),
+    }));
+
+    return {
+      atletas,
+      usuario: { id: usuario.id, role: usuario.role },
+    };
+  }
+  
+  // USER comum vê apenas seus próprios atletas
+  const result = await query(
+    `SELECT a.*, u.name as "usuarioName", u.role as "usuarioRole" 
+     FROM "Atleta" a 
+     LEFT JOIN "User" u ON a."usuarioId" = u.id 
+     WHERE a."usuarioId" = $1
+     ORDER BY a.nome ASC`,
+    [usuario.id]
+  );
+    
   const atletas = result.rows.map((row: any) => ({
     ...row,
     usuario: row.usuarioName ? { name: row.usuarioName, role: row.usuarioRole } : null,

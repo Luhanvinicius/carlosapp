@@ -1,24 +1,45 @@
 // lib/api.ts - Cliente de API para Next.js (compatível com axios-style)
+// Suporta JWT (preferido) e Basic Auth (fallback)
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
 
+let accessToken: string | null = null;
 let basicCreds: { email: string; senha: string } | null = null;
 
-export function setBasicCreds(creds: { email: string; senha: string } | null) {
-  basicCreds = creds;
-  // Salva no localStorage também para persistir
-  if (creds) {
-    localStorage.setItem('basicCreds', JSON.stringify(creds));
-  } else {
-    localStorage.removeItem('basicCreds');
+// Função para definir o token JWT
+export function setAccessToken(token: string | null) {
+  accessToken = token;
+  if (typeof window !== 'undefined') {
+    if (token) {
+      localStorage.setItem('accessToken', token);
+    } else {
+      localStorage.removeItem('accessToken');
+    }
   }
 }
 
-// Recupera credenciais do localStorage na inicialização
+// Função para definir credenciais Basic Auth (mantida para compatibilidade)
+export function setBasicCreds(creds: { email: string; senha: string } | null) {
+  basicCreds = creds;
+  if (typeof window !== 'undefined') {
+    if (creds) {
+      localStorage.setItem('basicCreds', JSON.stringify(creds));
+    } else {
+      localStorage.removeItem('basicCreds');
+    }
+  }
+}
+
+// Recupera tokens/credenciais do localStorage na inicialização
 if (typeof window !== 'undefined') {
-  const stored = localStorage.getItem('basicCreds');
-  if (stored) {
+  const storedToken = localStorage.getItem('accessToken');
+  if (storedToken) {
+    accessToken = storedToken;
+  }
+
+  const storedCreds = localStorage.getItem('basicCreds');
+  if (storedCreds) {
     try {
-      basicCreds = JSON.parse(stored);
+      basicCreds = JSON.parse(storedCreds);
     } catch {}
   }
 }
@@ -34,11 +55,23 @@ async function apiRequest(
     ...(options.headers as Record<string, string> || {}),
   };
 
-  // Adiciona Basic Auth se disponível
-  if (basicCreds) {
+  // Prioridade 1: JWT Bearer Token (método preferido)
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  } else if (typeof window !== 'undefined') {
+    // Tenta recuperar do localStorage se não estiver em memória
+    const storedToken = localStorage.getItem('accessToken');
+    if (storedToken) {
+      accessToken = storedToken;
+      headers['Authorization'] = `Bearer ${storedToken}`;
+    }
+  }
+
+  // Prioridade 2: Basic Auth (fallback para compatibilidade)
+  if (!headers['Authorization'] && basicCreds) {
     const b64 = btoa(`${basicCreds.email}:${basicCreds.senha}`);
     headers['Authorization'] = `Basic ${b64}`;
-  } else {
+  } else if (!headers['Authorization'] && typeof window !== 'undefined') {
     // Tenta recuperar do localStorage se não estiver em memória
     const stored = localStorage.getItem('basicCreds');
     if (stored) {
@@ -54,6 +87,11 @@ async function apiRequest(
     ...options,
     headers: headers as HeadersInit,
   });
+
+  // Se receber 401, pode ser token expirado - limpa o token
+  if (response.status === 401 && accessToken) {
+    setAccessToken(null);
+  }
 
   return response;
 }

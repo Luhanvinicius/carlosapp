@@ -26,6 +26,16 @@ export interface Quadra {
 }
 
 export type StatusAgendamento = "CONFIRMADO" | "CANCELADO" | "CONCLUIDO";
+export type TipoRecorrencia = "DIARIO" | "SEMANAL" | "MENSAL" | null;
+
+export interface RecorrenciaConfig {
+  tipo: TipoRecorrencia;
+  intervalo?: number; // Para SEMANAL: 1 = toda semana, 2 = a cada 2 semanas, etc.
+  diasSemana?: number[]; // Para SEMANAL: [1,3,5] = segunda, quarta, sexta (0=domingo, 1=segunda, etc)
+  diaMes?: number; // Para MENSAL: dia do mês (1-31)
+  dataFim?: string; // Data de término da recorrência (ISO string)
+  quantidadeOcorrencias?: number; // Número máximo de ocorrências
+}
 
 export interface Agendamento {
   id: string;
@@ -53,6 +63,9 @@ export interface Agendamento {
   valorNegociado: number | null;
   status: StatusAgendamento;
   observacoes?: string | null;
+  // Recorrência
+  recorrenciaId?: string | null; // ID que agrupa agendamentos da mesma recorrência
+  recorrenciaConfig?: RecorrenciaConfig | null; // Configuração da recorrência
   createdAt: string;
   updatedAt: string;
 }
@@ -92,6 +105,7 @@ export interface TabelaPreco {
 
 export interface CriarAgendamentoPayload {
   quadraId: string;
+  recorrencia?: RecorrenciaConfig;
   dataHora: string; // ISO string
   duracao?: number; // minutos, padrão 60
   observacoes?: string;
@@ -117,6 +131,8 @@ export interface AtualizarAgendamentoPayload {
   telefoneAvulso?: string | null;
   // Valor negociado (opcional, admin)
   valorNegociado?: number | null;
+  // Opções de recorrência
+  aplicarARecorrencia?: boolean; // true = aplicar a este e todos futuros, false = apenas este
 }
 
 export interface FiltrosAgendamento {

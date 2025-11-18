@@ -1,7 +1,8 @@
 // app/api/agendamento/[id]/route.ts - Rotas de API para Agendamento individual (GET, PUT, DELETE)
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { getUsuarioFromRequest } from '@/lib/auth';
+import { getUsuarioFromRequest, usuarioTemAcessoAQuadra } from '@/lib/auth';
+import { temRecorrencia } from '@/lib/recorrenciaService';
 
 // GET /api/agendamento/[id] - Obter agendamento por ID
 export async function GET(
@@ -10,6 +11,14 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    const usuario = await getUsuarioFromRequest(request);
+    if (!usuario) {
+      return NextResponse.json(
+        { mensagem: 'Não autenticado' },
+        { status: 401 }
+      );
+    }
+
     const result = await query(
       `SELECT 
         a.id, a."quadraId", a."usuarioId", a."atletaId", a."nomeAvulso", a."telefoneAvulso",
@@ -36,6 +45,25 @@ export async function GET(
     }
 
     const row = result.rows[0];
+
+    // Verificar se ORGANIZER tem acesso a este agendamento (via quadra)
+    if (usuario.role === 'ORGANIZER') {
+      const temAcesso = await usuarioTemAcessoAQuadra(usuario, row.quadraId);
+      if (!temAcesso) {
+        return NextResponse.json(
+          { mensagem: 'Você não tem permissão para visualizar este agendamento' },
+          { status: 403 }
+        );
+      }
+    } else if (usuario.role === 'USER') {
+      // USER comum só pode ver seus próprios agendamentos
+      if (row.usuarioId !== usuario.id) {
+        return NextResponse.json(
+          { mensagem: 'Você não tem permissão para visualizar este agendamento' },
+          { status: 403 }
+        );
+      }
+    }
     const agendamento = {
       id: row.id,
       quadraId: row.quadraId,
@@ -99,10 +127,23 @@ export async function PUT(
     }
 
     // Verificar se o agendamento existe e se o usuário tem permissão
-    const agendamentoCheck = await query(
-      'SELECT "usuarioId", "quadraId" FROM "Agendamento" WHERE id = $1',
-      [id]
-    );
+    let agendamentoCheck;
+    try {
+      agendamentoCheck = await query(
+        'SELECT "usuarioId", "quadraId", "recorrenciaId", "recorrenciaConfig" FROM "Agendamento" WHERE id = $1',
+        [id]
+      );
+    } catch (error: any) {
+      // Se os campos não existem, buscar sem eles
+      if (error.message?.includes('recorrenciaId') || error.message?.includes('recorrenciaConfig')) {
+        agendamentoCheck = await query(
+          'SELECT "usuarioId", "quadraId" FROM "Agendamento" WHERE id = $1',
+          [id]
+        );
+      } else {
+        throw error;
+      }
+    }
 
     if (agendamentoCheck.rows.length === 0) {
       return NextResponse.json(
@@ -112,9 +153,21 @@ export async function PUT(
     }
 
     const agendamentoAtual = agendamentoCheck.rows[0];
-    const podeEditar = usuario.role === 'ADMIN' || 
-                      usuario.role === 'ORGANIZER' || 
-                      agendamentoAtual.usuarioId === usuario.id;
+    const temRecorrenciaAtual = !!agendamentoAtual.recorrenciaId;
+    
+    // Verificar permissões
+    let podeEditar = false;
+    
+    if (usuario.role === 'ADMIN') {
+      podeEditar = true; // ADMIN pode editar tudo
+    } else if (usuario.role === 'ORGANIZER') {
+      // ORGANIZER pode editar agendamentos das quadras da sua arena
+      const temAcesso = await usuarioTemAcessoAQuadra(usuario, agendamentoAtual.quadraId);
+      podeEditar = temAcesso;
+    } else {
+      // USER comum pode editar apenas seus próprios agendamentos
+      podeEditar = agendamentoAtual.usuarioId === usuario.id;
+    }
 
     if (!podeEditar) {
       return NextResponse.json(
@@ -132,13 +185,19 @@ export async function PUT(
       nomeAvulso,
       telefoneAvulso,
       valorNegociado,
+      aplicarARecorrencia = false, // false = apenas este, true = este e todos futuros
     } = body;
 
     // Se dataHora foi alterada, verificar conflitos
     if (dataHora) {
-      const dataHoraInicio = new Date(dataHora);
+      // Tratar dataHora como horário local (sem conversão para UTC)
+      const [dataPart, horaPart] = dataHora.split('T');
+      const [ano, mes, dia] = dataPart.split('-').map(Number);
+      const [hora, minuto] = horaPart.split(':').map(Number);
+      
+      const dataHoraLocal = new Date(Date.UTC(ano, mes - 1, dia, hora, minuto, 0));
       const duracaoFinal = duracao || agendamentoAtual.duracao || 60;
-      const dataHoraFim = new Date(dataHoraInicio.getTime() + duracaoFinal * 60000);
+      const dataHoraFim = new Date(dataHoraLocal.getTime() + duracaoFinal * 60000);
 
       const conflitos = await query(
         `SELECT id FROM "Agendamento"
@@ -150,7 +209,7 @@ export async function PUT(
            OR ("dataHora" + (duracao * INTERVAL '1 minute') >= $3 AND "dataHora" + (duracao * INTERVAL '1 minute') <= $4)
            OR ("dataHora" <= $3 AND "dataHora" + (duracao * INTERVAL '1 minute') >= $4)
          )`,
-        [agendamentoAtual.quadraId, id, dataHoraInicio.toISOString(), dataHoraFim.toISOString()]
+        [agendamentoAtual.quadraId, id, dataHoraLocal.toISOString(), dataHoraFim.toISOString()]
       );
 
       if (conflitos.rows.length > 0) {
@@ -166,8 +225,15 @@ export async function PUT(
     let valorCalculado: number | null = null;
 
     if (dataHora || duracao) {
-      const dataHoraFinal = dataHora ? new Date(dataHora) : null;
+      let horaAgendamento: number | null = null;
       const duracaoFinal = duracao || agendamentoAtual.duracao || 60;
+
+      if (dataHora) {
+        // Parsear manualmente para obter hora local
+        const [dataPart, horaPart] = dataHora.split('T');
+        const [, , , hora, minuto] = [...dataPart.split('-').map(Number), ...horaPart.split(':').map(Number)];
+        horaAgendamento = hora * 60 + minuto;
+      }
 
       const tabelaPrecoResult = await query(
         `SELECT "valorHora", "inicioMinutoDia", "fimMinutoDia"
@@ -177,10 +243,9 @@ export async function PUT(
         [agendamentoAtual.quadraId]
       );
 
-      if (tabelaPrecoResult.rows.length > 0 && dataHoraFinal) {
-        const horaAgendamento = dataHoraFinal.getHours() * 60 + dataHoraFinal.getMinutes();
+      if (tabelaPrecoResult.rows.length > 0 && horaAgendamento !== null) {
         const precoAplicavel = tabelaPrecoResult.rows.find((tp: any) => {
-          return horaAgendamento >= tp.inicioMinutoDia && horaAgendamento < tp.fimMinutoDia;
+          return horaAgendamento! >= tp.inicioMinutoDia && horaAgendamento! < tp.fimMinutoDia;
         });
 
         if (precoAplicavel) {
@@ -196,8 +261,14 @@ export async function PUT(
     let paramCount = 1;
 
     if (dataHora) {
+      // Tratar dataHora como horário local (sem conversão para UTC)
+      const [dataPart, horaPart] = dataHora.split('T');
+      const [ano, mes, dia] = dataPart.split('-').map(Number);
+      const [hora, minuto] = horaPart.split(':').map(Number);
+      const dataHoraLocal = new Date(Date.UTC(ano, mes - 1, dia, hora, minuto, 0));
+      
       updates.push(`"dataHora" = $${paramCount}`);
-      paramsUpdate.push(new Date(dataHora).toISOString());
+      paramsUpdate.push(dataHoraLocal.toISOString());
       paramCount++;
     }
 
@@ -257,8 +328,47 @@ export async function PUT(
     }
 
     updates.push(`"updatedAt" = NOW()`);
+    
+    // Se há recorrência e o usuário quer aplicar a todos os futuros
+    if (temRecorrenciaAtual && aplicarARecorrencia) {
+      // Buscar data/hora atual do agendamento para identificar quais são os "futuros"
+      let agendamentoData;
+      try {
+        agendamentoData = await query(
+          'SELECT "dataHora", "recorrenciaId" FROM "Agendamento" WHERE id = $1',
+          [id]
+        );
+      } catch (error: any) {
+        if (error.message?.includes('recorrenciaId')) {
+          agendamentoData = await query(
+            'SELECT "dataHora" FROM "Agendamento" WHERE id = $1',
+            [id]
+          );
+        } else {
+          throw error;
+        }
+      }
+      
+      const dataHoraAtual = new Date(agendamentoData.rows[0].dataHora);
+      const recorrenciaId = agendamentoData.rows[0].recorrenciaId;
+      
+      if (recorrenciaId) {
+        // Atualizar todos os futuros da mesma recorrência (incluindo este)
+        const sqlFuturos = `UPDATE "Agendamento"
+                     SET ${updates.join(', ')}
+                     WHERE "recorrenciaId" = $${paramCount}
+                     AND "dataHora" >= $${paramCount + 1}`;
+        
+        const paramsFuturos = [...paramsUpdate];
+        paramsFuturos.push(recorrenciaId);
+        paramsFuturos.push(dataHoraAtual.toISOString());
+        
+        await query(sqlFuturos, paramsFuturos);
+      }
+    }
+    
+    // Atualizar o agendamento atual (sempre)
     paramsUpdate.push(id);
-
     const sql = `UPDATE "Agendamento"
                  SET ${updates.join(', ')}
                  WHERE id = $${paramCount}
@@ -351,10 +461,22 @@ export async function DELETE(
     }
 
     // Verificar se o agendamento existe e se o usuário tem permissão
-    const agendamentoCheck = await query(
-      'SELECT "usuarioId" FROM "Agendamento" WHERE id = $1',
-      [id]
-    );
+    let agendamentoCheck;
+    try {
+      agendamentoCheck = await query(
+        'SELECT "usuarioId", "quadraId", "recorrenciaId", "dataHora" FROM "Agendamento" WHERE id = $1',
+        [id]
+      );
+    } catch (error: any) {
+      if (error.message?.includes('recorrenciaId')) {
+        agendamentoCheck = await query(
+          'SELECT "usuarioId", "quadraId", "dataHora" FROM "Agendamento" WHERE id = $1',
+          [id]
+        );
+      } else {
+        throw error;
+      }
+    }
 
     if (agendamentoCheck.rows.length === 0) {
       return NextResponse.json(
@@ -363,9 +485,18 @@ export async function DELETE(
       );
     }
 
-    const podeDeletar = usuario.role === 'ADMIN' || 
-                       usuario.role === 'ORGANIZER' || 
-                       agendamentoCheck.rows[0].usuarioId === usuario.id;
+    const agendamento = agendamentoCheck.rows[0];
+    
+    // Verificar permissões
+    let podeDeletar = false;
+    if (usuario.role === 'ADMIN') {
+      podeDeletar = true;
+    } else if (usuario.role === 'ORGANIZER') {
+      const temAcesso = await usuarioTemAcessoAQuadra(usuario, agendamento.quadraId);
+      podeDeletar = temAcesso;
+    } else {
+      podeDeletar = agendamento.usuarioId === usuario.id;
+    }
 
     if (!podeDeletar) {
       return NextResponse.json(
@@ -374,6 +505,33 @@ export async function DELETE(
       );
     }
 
+    const body = await request.json().catch(() => ({}));
+    const aplicarARecorrencia = body.aplicarARecorrencia || false;
+    const temRecorrenciaAtual = !!agendamento.recorrenciaId;
+
+    // Se há recorrência e o usuário quer deletar todos os futuros
+    if (temRecorrenciaAtual && aplicarARecorrencia) {
+      const dataHoraAtual = new Date(agendamento.dataHora);
+      const recorrenciaId = agendamento.recorrenciaId;
+      
+      // Deletar este agendamento e todos os futuros da mesma recorrência
+      try {
+        await query(
+          `DELETE FROM "Agendamento"
+           WHERE "recorrenciaId" = $1
+           AND "dataHora" >= $2`,
+          [recorrenciaId, dataHoraAtual.toISOString()]
+        );
+        return NextResponse.json({ mensagem: 'Agendamento(s) deletado(s) com sucesso' });
+      } catch (error: any) {
+        // Se o campo não existe, apenas deletar este
+        if (!error.message?.includes('recorrenciaId')) {
+          throw error;
+        }
+      }
+    }
+
+    // Deletar o agendamento atual (sempre)
     const result = await query(
       `DELETE FROM "Agendamento" WHERE id = $1 RETURNING id`,
       [id]

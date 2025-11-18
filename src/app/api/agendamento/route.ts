@@ -1,7 +1,9 @@
 // app/api/agendamento/route.ts - Rotas de API para Agendamentos (CRUD completo)
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { getUsuarioFromRequest } from '@/lib/auth';
+import { getUsuarioFromRequest, usuarioTemAcessoAQuadra } from '@/lib/auth';
+import { gerarAgendamentosRecorrentes } from '@/lib/recorrenciaService';
+import type { RecorrenciaConfig } from '@/types/agendamento';
 
 // GET /api/agendamento - Listar agendamentos com filtros
 export async function GET(request: NextRequest) {
@@ -23,10 +25,14 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    let sql = `SELECT 
+    // Construir SQL base
+    let sqlBase = `SELECT 
       a.id, a."quadraId", a."usuarioId", a."atletaId", a."nomeAvulso", a."telefoneAvulso",
       a."dataHora", a.duracao, a."valorHora", a."valorCalculado", a."valorNegociado",
-      a.status, a.observacoes, a."createdAt", a."updatedAt",
+      a.status, a.observacoes, a."createdAt", a."updatedAt"`;
+    
+    // Tentar incluir campos de recorrência
+    let sql = sqlBase + `, a."recorrenciaId", a."recorrenciaConfig",
       q.id as "quadra_id", q.nome as "quadra_nome", q."pointId" as "quadra_pointId",
       p.id as "point_id", p.nome as "point_nome",
       u.id as "usuario_id", u.name as "usuario_name", u.email as "usuario_email",
@@ -54,14 +60,28 @@ export async function GET(request: NextRequest) {
     }
 
     if (dataInicio) {
+      // Tratar dataInicio como horário local (sem conversão de timezone)
+      // dataInicio vem no formato "YYYY-MM-DDTHH:mm:ss" (horário local)
+      const [dataPart, horaPart] = dataInicio.split('T');
+      const [ano, mes, dia] = dataPart.split('-').map(Number);
+      const [hora, minuto, segundo] = horaPart.split(':').map(Number);
+      const dataInicioLocal = new Date(Date.UTC(ano, mes - 1, dia, hora, minuto, segundo || 0));
+      
       sql += ` AND a."dataHora" >= $${paramCount}`;
-      params.push(dataInicio);
+      params.push(dataInicioLocal.toISOString());
       paramCount++;
     }
 
     if (dataFim) {
+      // Tratar dataFim como horário local (sem conversão de timezone)
+      // dataFim vem no formato "YYYY-MM-DDTHH:mm:ss" (horário local)
+      const [dataPart, horaPart] = dataFim.split('T');
+      const [ano, mes, dia] = dataPart.split('-').map(Number);
+      const [hora, minuto, segundo] = horaPart.split(':').map(Number);
+      const dataFimLocal = new Date(Date.UTC(ano, mes - 1, dia, hora, minuto, segundo || 0));
+      
       sql += ` AND a."dataHora" <= $${paramCount}`;
-      params.push(dataFim);
+      params.push(dataFimLocal.toISOString());
       paramCount++;
     }
 
@@ -71,7 +91,13 @@ export async function GET(request: NextRequest) {
       paramCount++;
     }
 
-    if (apenasMeus && usuario.role !== 'ADMIN') {
+    // Se for ORGANIZER, filtrar apenas agendamentos das quadras da sua arena
+    if (usuario.role === 'ORGANIZER' && usuario.pointIdGestor) {
+      sql += ` AND q."pointId" = $${paramCount}`;
+      params.push(usuario.pointIdGestor);
+      paramCount++;
+    } else if (apenasMeus && usuario.role !== 'ADMIN') {
+      // USER comum vê apenas seus próprios agendamentos
       sql += ` AND a."usuarioId" = $${paramCount}`;
       params.push(usuario.id);
       paramCount++;
@@ -79,7 +105,73 @@ export async function GET(request: NextRequest) {
 
     sql += ` ORDER BY a."dataHora" ASC`;
 
-    const result = await query(sql, params);
+    // Tentar executar com campos de recorrência, se falhar, tentar sem eles
+    let result;
+    try {
+      result = await query(sql, params);
+    } catch (error: any) {
+      // Se os campos de recorrência não existem, tentar sem eles
+      if (error.message?.includes('recorrenciaId') || error.message?.includes('recorrenciaConfig')) {
+        sql = sqlBase + `
+      q.id as "quadra_id", q.nome as "quadra_nome", q."pointId" as "quadra_pointId",
+      p.id as "point_id", p.nome as "point_nome",
+      u.id as "usuario_id", u.name as "usuario_name", u.email as "usuario_email",
+      at.id as "atleta_id", at.nome as "atleta_nome", at.fone as "atleta_fone"
+    FROM "Agendamento" a
+    LEFT JOIN "Quadra" q ON a."quadraId" = q.id
+    LEFT JOIN "Point" p ON q."pointId" = p.id
+    LEFT JOIN "User" u ON a."usuarioId" = u.id
+    LEFT JOIN "Atleta" at ON a."atletaId" = at.id
+    WHERE 1=1`;
+        
+        // Reconstruir filtros
+        let paramCount = 1;
+        if (quadraId) {
+          sql += ` AND a."quadraId" = $${paramCount}`;
+          paramCount++;
+        }
+        if (pointId) {
+          sql += ` AND q."pointId" = $${paramCount}`;
+          paramCount++;
+        }
+        if (dataInicio) {
+          const [dataPart, horaPart] = dataInicio.split('T');
+          const [ano, mes, dia] = dataPart.split('-').map(Number);
+          const [hora, minuto, segundo] = horaPart.split(':').map(Number);
+          const dataInicioLocal = new Date(Date.UTC(ano, mes - 1, dia, hora, minuto, segundo || 0));
+          sql += ` AND a."dataHora" >= $${paramCount}`;
+          params.push(dataInicioLocal.toISOString());
+          paramCount++;
+        }
+        if (dataFim) {
+          const [dataPart, horaPart] = dataFim.split('T');
+          const [ano, mes, dia] = dataPart.split('-').map(Number);
+          const [hora, minuto, segundo] = horaPart.split(':').map(Number);
+          const dataFimLocal = new Date(Date.UTC(ano, mes - 1, dia, hora, minuto, segundo || 0));
+          sql += ` AND a."dataHora" <= $${paramCount}`;
+          params.push(dataFimLocal.toISOString());
+          paramCount++;
+        }
+        if (status) {
+          sql += ` AND a.status = $${paramCount}`;
+          params.push(status);
+          paramCount++;
+        }
+        if (usuario.role === 'ORGANIZER' && usuario.pointIdGestor) {
+          sql += ` AND q."pointId" = $${paramCount}`;
+          params.push(usuario.pointIdGestor);
+          paramCount++;
+        } else if (apenasMeus && usuario.role !== 'ADMIN') {
+          sql += ` AND a."usuarioId" = $${paramCount}`;
+          params.push(usuario.id);
+          paramCount++;
+        }
+        sql += ` ORDER BY a."dataHora" ASC`;
+        result = await query(sql, params);
+      } else {
+        throw error;
+      }
+    }
 
     // Formatar resultado
     const agendamentos = result.rows.map((row) => ({
@@ -96,6 +188,12 @@ export async function GET(request: NextRequest) {
       valorNegociado: row.valorNegociado,
       status: row.status,
       observacoes: row.observacoes,
+      recorrenciaId: row.recorrenciaId || null,
+      recorrenciaConfig: row.recorrenciaConfig 
+        ? (typeof row.recorrenciaConfig === 'string' 
+          ? JSON.parse(row.recorrenciaConfig) 
+          : row.recorrenciaConfig)
+        : null,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       quadra: {
@@ -150,7 +248,18 @@ export async function POST(request: NextRequest) {
       nomeAvulso,
       telefoneAvulso,
       valorNegociado,
-    } = body;
+      recorrencia,
+    } = body as {
+      quadraId: string;
+      dataHora: string;
+      duracao?: number;
+      observacoes?: string;
+      atletaId?: string;
+      nomeAvulso?: string;
+      telefoneAvulso?: string;
+      valorNegociado?: number;
+      recorrencia?: RecorrenciaConfig;
+    };
 
     if (!quadraId || !dataHora) {
       return NextResponse.json(
@@ -168,9 +277,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Verificar se ORGANIZER tem acesso a esta quadra
+    if (usuario.role === 'ORGANIZER') {
+      const temAcesso = await usuarioTemAcessoAQuadra(usuario, quadraId);
+      if (!temAcesso) {
+        return NextResponse.json(
+          { mensagem: 'Você não tem permissão para criar agendamentos nesta quadra' },
+          { status: 403 }
+        );
+      }
+    }
+
     // Verificar conflitos de horário
-    const dataHoraInicio = new Date(dataHora);
-    const dataHoraFim = new Date(dataHoraInicio.getTime() + duracao * 60000);
+    // Tratar dataHora como horário local (sem conversão para UTC)
+    // dataHora vem no formato "YYYY-MM-DDTHH:mm" (horário local)
+    // Parsear manualmente para evitar conversão de timezone
+    const [dataPart, horaPart] = dataHora.split('T');
+    const [ano, mes, dia] = dataPart.split('-').map(Number);
+    const [hora, minuto] = horaPart.split(':').map(Number);
+    
+    // Criar data/hora tratando como UTC (mas representando horário local)
+    // Isso evita conversão de timezone quando salvamos no banco
+    const dataHoraLocal = new Date(Date.UTC(ano, mes - 1, dia, hora, minuto, 0));
+    const dataHoraFim = new Date(dataHoraLocal.getTime() + duracao * 60000);
 
     const conflitos = await query(
       `SELECT id FROM "Agendamento"
@@ -181,7 +310,7 @@ export async function POST(request: NextRequest) {
          OR ("dataHora" + (duracao * INTERVAL '1 minute') >= $2 AND "dataHora" + (duracao * INTERVAL '1 minute') <= $3)
          OR ("dataHora" <= $2 AND "dataHora" + (duracao * INTERVAL '1 minute') >= $3)
        )`,
-      [quadraId, dataHoraInicio.toISOString(), dataHoraFim.toISOString()]
+      [quadraId, dataHoraLocal.toISOString(), dataHoraFim.toISOString()]
     );
 
     if (conflitos.rows.length > 0) {
@@ -204,7 +333,8 @@ export async function POST(request: NextRequest) {
     );
 
     if (tabelaPrecoResult.rows.length > 0) {
-      const horaAgendamento = dataHoraInicio.getHours() * 60 + dataHoraInicio.getMinutes();
+      // Usar hora local (sem conversão de timezone)
+      const horaAgendamento = hora * 60 + minuto;
       const precoAplicavel = tabelaPrecoResult.rows.find((tp: any) => {
         return horaAgendamento >= tp.inicioMinutoDia && horaAgendamento < tp.fimMinutoDia;
       });
@@ -221,52 +351,213 @@ export async function POST(request: NextRequest) {
     // Determinar usuarioId: se for admin/organizer agendando para atleta ou avulso, pode ser null
     const usuarioIdFinal = (atletaId || nomeAvulso) ? null : usuario.id;
 
-    const result = await query(
-      `INSERT INTO "Agendamento" (
-        id, "quadraId", "usuarioId", "atletaId", "nomeAvulso", "telefoneAvulso",
-        "dataHora", duracao, "valorHora", "valorCalculado", "valorNegociado",
-        status, observacoes, "createdAt", "updatedAt"
-      )
-      VALUES (
-        gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'CONFIRMADO', $11, NOW(), NOW()
-      )
-      RETURNING id, "quadraId", "usuarioId", "atletaId", "nomeAvulso", "telefoneAvulso",
-        "dataHora", duracao, "valorHora", "valorCalculado", "valorNegociado",
-        status, observacoes, "createdAt", "updatedAt"`,
-      [
+    // Função auxiliar para criar um agendamento
+    const criarAgendamentoUnico = async (dataHoraAgendamento: Date, recorrenciaId?: string, recorrenciaConfig?: RecorrenciaConfig) => {
+      // Verificar conflitos para este agendamento específico
+      const dataFimAgendamento = new Date(dataHoraAgendamento.getTime() + duracao * 60000);
+      const conflitos = await query(
+        `SELECT id FROM "Agendamento"
+         WHERE "quadraId" = $1
+         AND status = 'CONFIRMADO'
+         AND (
+           ("dataHora" >= $2 AND "dataHora" < $3)
+           OR ("dataHora" + (duracao * INTERVAL '1 minute') >= $2 AND "dataHora" + (duracao * INTERVAL '1 minute') <= $3)
+           OR ("dataHora" <= $2 AND "dataHora" + (duracao * INTERVAL '1 minute') >= $3)
+         )`,
+        [quadraId, dataHoraAgendamento.toISOString(), dataFimAgendamento.toISOString()]
+      );
+
+      if (conflitos.rows.length > 0) {
+        return null; // Conflito detectado
+      }
+
+      // Tentar inserir com campos de recorrência (se existirem)
+      try {
+        const result = await query(
+          `INSERT INTO "Agendamento" (
+            id, "quadraId", "usuarioId", "atletaId", "nomeAvulso", "telefoneAvulso",
+            "dataHora", duracao, "valorHora", "valorCalculado", "valorNegociado",
+            status, observacoes, "recorrenciaId", "recorrenciaConfig", "createdAt", "updatedAt"
+          )
+          VALUES (
+            gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'CONFIRMADO', $11, $12, $13, NOW(), NOW()
+          )
+          RETURNING id`,
+          [
+            quadraId,
+            usuarioIdFinal,
+            atletaId || null,
+            nomeAvulso || null,
+            telefoneAvulso || null,
+            dataHoraAgendamento.toISOString(),
+            duracao,
+            valorHora,
+            valorCalculado,
+            valorFinal,
+            observacoes || null,
+            recorrenciaId || null,
+            recorrenciaConfig ? JSON.stringify(recorrenciaConfig) : null,
+          ]
+        );
+        return result.rows[0].id;
+      } catch (error: any) {
+        // Se os campos de recorrência não existem, tentar sem eles
+        if (error.message?.includes('recorrenciaId') || error.message?.includes('recorrenciaConfig')) {
+          const result = await query(
+            `INSERT INTO "Agendamento" (
+              id, "quadraId", "usuarioId", "atletaId", "nomeAvulso", "telefoneAvulso",
+              "dataHora", duracao, "valorHora", "valorCalculado", "valorNegociado",
+              status, observacoes, "createdAt", "updatedAt"
+            )
+            VALUES (
+              gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'CONFIRMADO', $11, NOW(), NOW()
+            )
+            RETURNING id`,
+            [
+              quadraId,
+              usuarioIdFinal,
+              atletaId || null,
+              nomeAvulso || null,
+              telefoneAvulso || null,
+              dataHoraAgendamento.toISOString(),
+              duracao,
+              valorHora,
+              valorCalculado,
+              valorFinal,
+              observacoes || null,
+            ]
+          );
+          return result.rows[0].id;
+        }
+        throw error;
+      }
+    };
+
+    // Se há recorrência, gerar todos os agendamentos
+    if (recorrencia && recorrencia.tipo) {
+      const dadosBase = {
         quadraId,
-        usuarioIdFinal,
-        atletaId || null,
-        nomeAvulso || null,
-        telefoneAvulso || null,
-        dataHoraInicio.toISOString(),
+        usuarioId: usuarioIdFinal,
+        atletaId: atletaId || null,
+        nomeAvulso: nomeAvulso || null,
+        telefoneAvulso: telefoneAvulso || null,
         duracao,
         valorHora,
         valorCalculado,
-        valorFinal,
-        observacoes || null,
-      ]
-    );
+        valorNegociado: valorFinal,
+        observacoes: observacoes || null,
+      };
+
+      const agendamentosRecorrentes = gerarAgendamentosRecorrentes(dataHoraLocal, recorrencia, dadosBase);
+      
+      // Verificar conflitos para todos antes de criar
+      const conflitosEncontrados: string[] = [];
+      for (const agendamentoRec of agendamentosRecorrentes) {
+        const dataAgendamento = new Date(agendamentoRec.dataHora);
+        const dataFimAgendamento = new Date(dataAgendamento.getTime() + duracao * 60000);
+        const conflitos = await query(
+          `SELECT id FROM "Agendamento"
+           WHERE "quadraId" = $1
+           AND status = 'CONFIRMADO'
+           AND (
+             ("dataHora" >= $2 AND "dataHora" < $3)
+             OR ("dataHora" + (duracao * INTERVAL '1 minute') >= $2 AND "dataHora" + (duracao * INTERVAL '1 minute') <= $3)
+             OR ("dataHora" <= $2 AND "dataHora" + (duracao * INTERVAL '1 minute') >= $3)
+           )`,
+          [quadraId, dataAgendamento.toISOString(), dataFimAgendamento.toISOString()]
+        );
+
+        if (conflitos.rows.length > 0) {
+          conflitosEncontrados.push(dataAgendamento.toISOString());
+        }
+      }
+
+      if (conflitosEncontrados.length > 0) {
+        return NextResponse.json(
+          { mensagem: `Existem conflitos em ${conflitosEncontrados.length} agendamento(s) da recorrência` },
+          { status: 400 }
+        );
+      }
+
+      // Criar todos os agendamentos recorrentes
+      const idsCriados: string[] = [];
+      for (const agendamentoRec of agendamentosRecorrentes) {
+        const id = await criarAgendamentoUnico(
+          new Date(agendamentoRec.dataHora),
+          agendamentoRec.recorrenciaId,
+          agendamentoRec.recorrenciaConfig
+        );
+        if (id) {
+          idsCriados.push(id);
+        }
+      }
+
+      if (idsCriados.length === 0) {
+        return NextResponse.json(
+          { mensagem: 'Não foi possível criar nenhum agendamento da recorrência' },
+          { status: 400 }
+        );
+      }
+
+      // Retornar o primeiro agendamento criado
+      var agendamentoId = idsCriados[0];
+    } else {
+      // Criar agendamento único (sem recorrência)
+      const idCriado = await criarAgendamentoUnico(dataHoraLocal);
+      if (!idCriado) {
+        return NextResponse.json(
+          { mensagem: 'Já existe um agendamento confirmado neste horário' },
+          { status: 400 }
+        );
+      }
+      var agendamentoId = idCriado;
+    }
 
     // Buscar dados relacionados para retorno completo
-    const agendamentoId = result.rows[0].id;
-    const agendamentoCompleto = await query(
-      `SELECT 
-        a.id, a."quadraId", a."usuarioId", a."atletaId", a."nomeAvulso", a."telefoneAvulso",
-        a."dataHora", a.duracao, a."valorHora", a."valorCalculado", a."valorNegociado",
-        a.status, a.observacoes, a."createdAt", a."updatedAt",
-        q.id as "quadra_id", q.nome as "quadra_nome", q."pointId" as "quadra_pointId",
-        p.id as "point_id", p.nome as "point_nome",
-        u.id as "usuario_id", u.name as "usuario_name", u.email as "usuario_email",
-        at.id as "atleta_id", at.nome as "atleta_nome", at.fone as "atleta_fone"
-      FROM "Agendamento" a
-      LEFT JOIN "Quadra" q ON a."quadraId" = q.id
-      LEFT JOIN "Point" p ON q."pointId" = p.id
-      LEFT JOIN "User" u ON a."usuarioId" = u.id
-      LEFT JOIN "Atleta" at ON a."atletaId" = at.id
-      WHERE a.id = $1`,
-      [agendamentoId]
-    );
+    let agendamentoCompleto;
+    try {
+      // Tentar buscar com campos de recorrência
+      agendamentoCompleto = await query(
+        `SELECT 
+          a.id, a."quadraId", a."usuarioId", a."atletaId", a."nomeAvulso", a."telefoneAvulso",
+          a."dataHora", a.duracao, a."valorHora", a."valorCalculado", a."valorNegociado",
+          a.status, a.observacoes, a."recorrenciaId", a."recorrenciaConfig", a."createdAt", a."updatedAt",
+          q.id as "quadra_id", q.nome as "quadra_nome", q."pointId" as "quadra_pointId",
+          p.id as "point_id", p.nome as "point_nome",
+          u.id as "usuario_id", u.name as "usuario_name", u.email as "usuario_email",
+          at.id as "atleta_id", at.nome as "atleta_nome", at.fone as "atleta_fone"
+        FROM "Agendamento" a
+        LEFT JOIN "Quadra" q ON a."quadraId" = q.id
+        LEFT JOIN "Point" p ON q."pointId" = p.id
+        LEFT JOIN "User" u ON a."usuarioId" = u.id
+        LEFT JOIN "Atleta" at ON a."atletaId" = at.id
+        WHERE a.id = $1`,
+        [agendamentoId]
+      );
+    } catch (error: any) {
+      // Se os campos não existem, buscar sem eles
+      if (error.message?.includes('recorrenciaId') || error.message?.includes('recorrenciaConfig')) {
+        agendamentoCompleto = await query(
+          `SELECT 
+            a.id, a."quadraId", a."usuarioId", a."atletaId", a."nomeAvulso", a."telefoneAvulso",
+            a."dataHora", a.duracao, a."valorHora", a."valorCalculado", a."valorNegociado",
+            a.status, a.observacoes, a."createdAt", a."updatedAt",
+            q.id as "quadra_id", q.nome as "quadra_nome", q."pointId" as "quadra_pointId",
+            p.id as "point_id", p.nome as "point_nome",
+            u.id as "usuario_id", u.name as "usuario_name", u.email as "usuario_email",
+            at.id as "atleta_id", at.nome as "atleta_nome", at.fone as "atleta_fone"
+          FROM "Agendamento" a
+          LEFT JOIN "Quadra" q ON a."quadraId" = q.id
+          LEFT JOIN "Point" p ON q."pointId" = p.id
+          LEFT JOIN "User" u ON a."usuarioId" = u.id
+          LEFT JOIN "Atleta" at ON a."atletaId" = at.id
+          WHERE a.id = $1`,
+          [agendamentoId]
+        );
+      } else {
+        throw error;
+      }
+    }
 
     const row = agendamentoCompleto.rows[0];
     const agendamento = {
@@ -283,6 +574,12 @@ export async function POST(request: NextRequest) {
       valorNegociado: row.valorNegociado,
       status: row.status,
       observacoes: row.observacoes,
+      recorrenciaId: row.recorrenciaId || null,
+      recorrenciaConfig: row.recorrenciaConfig 
+        ? (typeof row.recorrenciaConfig === 'string' 
+          ? JSON.parse(row.recorrenciaConfig) 
+          : row.recorrenciaConfig)
+        : null,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       quadra: {

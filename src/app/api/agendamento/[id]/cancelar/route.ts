@@ -1,7 +1,8 @@
 // app/api/agendamento/[id]/cancelar/route.ts - Rota para cancelar agendamento
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { getUsuarioFromRequest } from '@/lib/auth';
+import { getUsuarioFromRequest, usuarioTemAcessoAQuadra } from '@/lib/auth';
+import { temRecorrencia } from '@/lib/recorrenciaService';
 
 // POST /api/agendamento/[id]/cancelar - Cancelar agendamento
 export async function POST(
@@ -19,10 +20,22 @@ export async function POST(
     }
 
     // Verificar se o agendamento existe e se o usuário tem permissão
-    const agendamentoCheck = await query(
-      'SELECT "usuarioId", status FROM "Agendamento" WHERE id = $1',
-      [id]
-    );
+    let agendamentoCheck;
+    try {
+      agendamentoCheck = await query(
+        'SELECT "usuarioId", "quadraId", status, "recorrenciaId", "dataHora" FROM "Agendamento" WHERE id = $1',
+        [id]
+      );
+    } catch (error: any) {
+      if (error.message?.includes('recorrenciaId')) {
+        agendamentoCheck = await query(
+          'SELECT "usuarioId", "quadraId", status, "dataHora" FROM "Agendamento" WHERE id = $1',
+          [id]
+        );
+      } else {
+        throw error;
+      }
+    }
 
     if (agendamentoCheck.rows.length === 0) {
       return NextResponse.json(
@@ -40,9 +53,19 @@ export async function POST(
       );
     }
 
-    const podeCancelar = usuario.role === 'ADMIN' || 
-                        usuario.role === 'ORGANIZER' || 
-                        agendamento.usuarioId === usuario.id;
+    // Verificar permissões
+    let podeCancelar = false;
+    
+    if (usuario.role === 'ADMIN') {
+      podeCancelar = true; // ADMIN pode cancelar tudo
+    } else if (usuario.role === 'ORGANIZER') {
+      // ORGANIZER pode cancelar agendamentos das quadras da sua arena
+      const temAcesso = await usuarioTemAcessoAQuadra(usuario, agendamento.quadraId);
+      podeCancelar = temAcesso;
+    } else {
+      // USER comum pode cancelar apenas seus próprios agendamentos
+      podeCancelar = agendamento.usuarioId === usuario.id;
+    }
 
     if (!podeCancelar) {
       return NextResponse.json(
@@ -51,6 +74,33 @@ export async function POST(
       );
     }
 
+    const body = await request.json().catch(() => ({}));
+    const aplicarARecorrencia = body.aplicarARecorrencia || false;
+    const temRecorrenciaAtual = !!agendamento.recorrenciaId;
+
+    // Se há recorrência e o usuário quer cancelar todos os futuros
+    if (temRecorrenciaAtual && aplicarARecorrencia) {
+      const dataHoraAtual = new Date(agendamento.dataHora);
+      const recorrenciaId = agendamento.recorrenciaId;
+      
+      // Cancelar este agendamento e todos os futuros da mesma recorrência
+      try {
+        await query(
+          `UPDATE "Agendamento"
+           SET status = 'CANCELADO', "updatedAt" = NOW()
+           WHERE "recorrenciaId" = $1
+           AND "dataHora" >= $2`,
+          [recorrenciaId, dataHoraAtual.toISOString()]
+        );
+      } catch (error: any) {
+        // Se o campo não existe, apenas cancelar este
+        if (!error.message?.includes('recorrenciaId')) {
+          throw error;
+        }
+      }
+    }
+
+    // Cancelar o agendamento atual (sempre)
     const result = await query(
       `UPDATE "Agendamento"
        SET status = 'CANCELADO', "updatedAt" = NOW()

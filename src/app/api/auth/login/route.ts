@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import bcrypt from 'bcryptjs';
+import { generateAccessToken, generateRefreshToken } from '@/lib/jwt';
 
 export async function POST(request: NextRequest) {
   try {
@@ -49,12 +50,19 @@ export async function POST(request: NextRequest) {
       email: usuarioDb.email,
       role: (usuarioDb as any).role ?? "USER",
       atletaId: (usuarioDb as any).atletaId !== undefined ? (usuarioDb as any).atletaId : undefined,
+      pointIdGestor: (usuarioDb as any).pointIdGestor !== undefined ? (usuarioDb as any).pointIdGestor : undefined,
     };
+
+    // Gerar tokens JWT
+    const accessToken = generateAccessToken(usuario);
+    const refreshToken = generateRefreshToken(usuario);
 
     return NextResponse.json(
       { 
         usuario,
-        user: usuario  // Alias para compatibilidade
+        user: usuario,  // Alias para compatibilidade
+        token: accessToken,  // Token JWT de acesso
+        refreshToken: refreshToken,  // Refresh token
       },
       {
         headers: {

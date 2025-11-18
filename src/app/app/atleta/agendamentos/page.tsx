@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { pointService, quadraService, agendamentoService } from '@/services/agendamentoService';
 import EditarAgendamentoModal from '@/components/EditarAgendamentoModal';
+import ConfirmarCancelamentoRecorrenteModal from '@/components/ConfirmarCancelamentoRecorrenteModal';
 import type { Point, Quadra, Agendamento, StatusAgendamento } from '@/types/agendamento';
 import { Calendar, Clock, MapPin, Plus, X, CheckCircle, XCircle, CalendarCheck, User, Users, UserPlus, Edit } from 'lucide-react';
 
@@ -23,6 +24,8 @@ export default function AgendamentosPage() {
   const [apenasMeus, setApenasMeus] = useState(true);
   const [modalEditarAberto, setModalEditarAberto] = useState(false);
   const [agendamentoEditando, setAgendamentoEditando] = useState<Agendamento | null>(null);
+  const [modalCancelarAberto, setModalCancelarAberto] = useState(false);
+  const [agendamentoCancelando, setAgendamentoCancelando] = useState<Agendamento | null>(null);
 
   useEffect(() => {
     carregarDados();
@@ -90,7 +93,7 @@ export default function AgendamentosPage() {
     setModalEditarAberto(true);
   };
 
-  const handleCancelar = async (agendamento: Agendamento) => {
+  const handleCancelar = (agendamento: Agendamento) => {
     const podeCancelar = isAdmin || agendamento.usuarioId === usuario?.id;
     
     if (!podeCancelar) {
@@ -98,10 +101,17 @@ export default function AgendamentosPage() {
       return;
     }
 
-    if (!confirm('Tem certeza que deseja cancelar este agendamento?')) return;
+    setAgendamentoCancelando(agendamento);
+    setModalCancelarAberto(true);
+  };
+
+  const confirmarCancelamento = async (aplicarARecorrencia: boolean) => {
+    if (!agendamentoCancelando) return;
 
     try {
-      await agendamentoService.cancelar(agendamento.id);
+      await agendamentoService.cancelar(agendamentoCancelando.id, aplicarARecorrencia);
+      setModalCancelarAberto(false);
+      setAgendamentoCancelando(null);
       carregarAgendamentos();
     } catch (error: any) {
       alert(error?.response?.data?.mensagem || 'Erro ao cancelar agendamento');
@@ -459,6 +469,17 @@ export default function AgendamentosPage() {
           setAgendamentoEditando(null);
           carregarAgendamentos();
         }}
+      />
+
+      {/* Modal de Confirmação de Cancelamento */}
+      <ConfirmarCancelamentoRecorrenteModal
+        isOpen={modalCancelarAberto}
+        agendamento={agendamentoCancelando}
+        onClose={() => {
+          setModalCancelarAberto(false);
+          setAgendamentoCancelando(null);
+        }}
+        onConfirmar={confirmarCancelamento}
       />
     </div>
   );

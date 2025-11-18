@@ -1,6 +1,7 @@
 // app/api/quadra/[id]/route.ts - Rotas de API para Quadra individual (GET, PUT, DELETE)
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { getUsuarioFromRequest, usuarioTemAcessoAoPoint, usuarioTemAcessoAQuadra } from '@/lib/auth';
 
 // GET /api/quadra/[id] - Obter quadra por ID
 export async function GET(
@@ -60,6 +61,33 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
+    const usuario = await getUsuarioFromRequest(request);
+    if (!usuario) {
+      return NextResponse.json(
+        { mensagem: 'Não autenticado' },
+        { status: 401 }
+      );
+    }
+
+    // Verificar permissões
+    if (usuario.role !== 'ADMIN' && usuario.role !== 'ORGANIZER') {
+      return NextResponse.json(
+        { mensagem: 'Apenas administradores e organizadores podem editar quadras' },
+        { status: 403 }
+      );
+    }
+
+    // Verificar se ORGANIZER tem acesso a esta quadra
+    if (usuario.role === 'ORGANIZER') {
+      const temAcesso = await usuarioTemAcessoAQuadra(usuario, id);
+      if (!temAcesso) {
+        return NextResponse.json(
+          { mensagem: 'Você não tem permissão para editar esta quadra' },
+          { status: 403 }
+        );
+      }
+    }
+
     const body = await request.json();
     const { nome, pointId, tipo, capacidade, ativo } = body;
 
@@ -70,7 +98,7 @@ export async function PUT(
       );
     }
 
-    // Se pointId foi alterado, verificar se existe
+    // Se pointId foi alterado, verificar se existe e se ORGANIZER tem acesso
     if (pointId) {
       const pointCheck = await query('SELECT id FROM "Point" WHERE id = $1', [pointId]);
       if (pointCheck.rows.length === 0) {
@@ -78,6 +106,17 @@ export async function PUT(
           { mensagem: 'Estabelecimento não encontrado' },
           { status: 404 }
         );
+      }
+
+      // Verificar se ORGANIZER tem acesso ao novo point
+      if (usuario.role === 'ORGANIZER') {
+        const temAcesso = usuarioTemAcessoAoPoint(usuario, pointId);
+        if (!temAcesso) {
+          return NextResponse.json(
+            { mensagem: 'Você não tem permissão para mover esta quadra para esta arena' },
+            { status: 403 }
+          );
+        }
       }
     }
 
@@ -120,6 +159,32 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
+    const usuario = await getUsuarioFromRequest(request);
+    if (!usuario) {
+      return NextResponse.json(
+        { mensagem: 'Não autenticado' },
+        { status: 401 }
+      );
+    }
+
+    // Verificar permissões
+    if (usuario.role !== 'ADMIN' && usuario.role !== 'ORGANIZER') {
+      return NextResponse.json(
+        { mensagem: 'Apenas administradores e organizadores podem deletar quadras' },
+        { status: 403 }
+      );
+    }
+
+    // Verificar se ORGANIZER tem acesso a esta quadra
+    if (usuario.role === 'ORGANIZER') {
+      const temAcesso = await usuarioTemAcessoAQuadra(usuario, id);
+      if (!temAcesso) {
+        return NextResponse.json(
+          { mensagem: 'Você não tem permissão para deletar esta quadra' },
+          { status: 403 }
+        );
+      }
+    }
     // Verificar se há agendamentos vinculados
     const agendamentosResult = await query(
       `SELECT COUNT(*) as count FROM "Agendamento" WHERE "quadraId" = $1`,
