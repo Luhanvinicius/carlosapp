@@ -1,10 +1,10 @@
 // lib/jwt.ts - Funções para geração e validação de JWT
-import jwt from 'jsonwebtoken';
+import jwt, { SignOptions } from 'jsonwebtoken';
 
 // Chave secreta para assinar tokens (deve estar em variável de ambiente)
-const JWT_SECRET = process.env.JWT_SECRET || 'sua-chave-secreta-super-segura-mude-em-producao';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d'; // 7 dias por padrão
-const JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '30d'; // 30 dias para refresh token
+const JWT_SECRET: string = process.env.JWT_SECRET || 'sua-chave-secreta-super-segura-mude-em-producao';
+const JWT_EXPIRES_IN: string = process.env.JWT_EXPIRES_IN || '7d'; // 7 dias por padrão
+const JWT_REFRESH_EXPIRES_IN: string = process.env.JWT_REFRESH_EXPIRES_IN || '30d'; // 30 dias para refresh token
 
 export interface JwtPayload {
   id: string;
@@ -21,18 +21,18 @@ export interface JwtPayload {
  * Gera um token JWT de acesso
  */
 export function generateAccessToken(payload: Omit<JwtPayload, 'iat' | 'exp'>): string {
-  return jwt.sign(payload, JWT_SECRET, {
+  return jwt.sign(payload as object, JWT_SECRET, {
     expiresIn: JWT_EXPIRES_IN,
-  });
+  } as SignOptions);
 }
 
 /**
  * Gera um refresh token (válido por mais tempo)
  */
 export function generateRefreshToken(payload: Omit<JwtPayload, 'iat' | 'exp'>): string {
-  return jwt.sign({ ...payload, type: 'refresh' }, JWT_SECRET, {
+  return jwt.sign({ ...payload, type: 'refresh' } as object, JWT_SECRET, {
     expiresIn: JWT_REFRESH_EXPIRES_IN,
-  });
+  } as SignOptions);
 }
 
 /**
