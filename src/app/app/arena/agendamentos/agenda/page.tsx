@@ -681,16 +681,16 @@ export default function ArenaAgendaSemanalPage() {
                         quadras.forEach((quadra) => {
                           if (estaBloqueado(dia, slot.hora, slot.minuto, quadra.id)) {
                             const bloqueiosQuadra = getBloqueiosPorDiaEQuadra(dia, quadra.id);
-                            bloqueiosQuadra.forEach((bloqueio) => {
-                              // Verificar se o bloqueio cobre este horário específico
-                              const minutosSlot = slot.hora * 60 + slot.minuto;
-                              if (bloqueio.horaInicio === null || bloqueio.horaFim === null) {
-                                // Dia inteiro bloqueado
-                                bloqueiosNoSlot.push({ quadraId: quadra.id, bloqueio });
-                              } else if (minutosSlot >= bloqueio.horaInicio && minutosSlot < bloqueio.horaFim) {
-                                bloqueiosNoSlot.push({ quadraId: quadra.id, bloqueio });
-                              }
-                            });
+                              bloqueiosQuadra.forEach((bloqueio) => {
+                                // Verificar se o bloqueio cobre este horário específico
+                                const minutosSlot = slot.hora * 60 + slot.minuto;
+                                if (bloqueio.horaInicio === null || bloqueio.horaInicio === undefined || bloqueio.horaFim === null || bloqueio.horaFim === undefined) {
+                                  // Dia inteiro bloqueado
+                                  bloqueiosNoSlot.push({ quadraId: quadra.id, bloqueio });
+                                } else if (minutosSlot >= bloqueio.horaInicio && minutosSlot < bloqueio.horaFim) {
+                                  bloqueiosNoSlot.push({ quadraId: quadra.id, bloqueio });
+                                }
+                              });
                           }
                         });
 
